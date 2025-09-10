@@ -1,0 +1,527 @@
+import os
+import json
+import requests
+from typing import Dict, List, Optional
+from datetime import datetime
+import logging
+from dataclasses import dataclass
+
+from dotenv import load_dotenv
+load_dotenv()
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+@dataclass
+class CallSummary:
+    call_id: str
+    caller_phone: str
+    duration: int
+    transcript: str
+    summary: str
+    key_points: List[str]
+    timestamp: datetime
+
+class OraniAIAssistant:
+    def __init__(self, backend_api_base_url: str, vapi_api_key: str, twilio_account_sid: str, twilio_auth_token: str):
+        self.backend_api_url = backend_api_base_url
+        self.vapi_api_key = vapi_api_key
+        self.twilio_account_sid = twilio_account_sid
+        self.twilio_auth_token = twilio_auth_token
+        self.vapi_base_url = "https://api.vapi.ai"
+        
+        # Headers for API requests
+        self.vapi_headers = {
+            "Authorization": f"Bearer {vapi_api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        self.backend_headers = {
+            "Content-Type": "application/json"
+        }
+
+    def create_assistant(self, user_id: str, business_info: Dict) -> Dict:
+        """Create a Vapi assistant with custom business knowledge"""
+        
+        # Get business knowledge from backend
+        knowledge_data = self._get_business_knowledge(user_id)
+        
+        # Create system message with business context
+        system_message = self._build_system_message(business_info, knowledge_data)
+        
+        assistant_config = {
+            "name": f"Orani Assistant - {business_info.get('business_name', 'Professional')}",
+            "model": {
+                "provider": "openai",
+                "model": "gpt-4",
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": system_message
+                    }
+                ]
+            },
+            "voice": {
+                "provider": "11labs",
+                "voiceId": "21m00Tcm4TlvDq8ikWAM",  # Default professional voice (ElevenLabs)
+                "speed": 1.0,
+                "stability": 0.5,
+                "similarityBoost": 0.75
+            },
+            "firstMessage": business_info.get('greeting', "Hello! Thank you for calling. How can I help you today?"),
+            "recordingEnabled": True,
+            "endCallMessage": "Thank you for calling. Have a great day!",
+            "maxDurationSeconds": 1800,  # 30 minutes max
+            "transcriber": {
+                "provider": "deepgram",
+                "model": "nova-2",
+                "language": "en-US"
+            },
+            "backgroundSound": "office",
+            "backchannelingEnabled": True,
+            "backgroundDenoisingEnabled": True,
+            "modelOutputInMessagesEnabled": True
+        }
+        
+        try:
+            response = requests.post(
+                f"{self.vapi_base_url}/assistant",
+                headers=self.vapi_headers,
+                json=assistant_config
+            )
+            
+            if response.status_code == 201:
+                assistant_data = response.json()
+                # Store assistant ID in backend
+                self._store_assistant_id(user_id, assistant_data['id'])
+                return assistant_data
+            else:
+                logger.error(f"Failed to create assistant: {response.text}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error creating assistant: {str(e)}")
+            return None
+
+    def setup_phone_number(self, user_id: str, phone_number: str = None) -> Dict:
+        """
+        Setup Twilio phone number and configure with Vapi.
+        This function is now more robust: it will find, create, or update as needed.
+        """
+        
+        # If no specific number requested, get an available one
+        if not phone_number:
+            available_numbers = self._get_available_numbers()
+            if available_numbers:
+                phone_number = available_numbers[0]['phoneNumber']
+            else:
+                logger.error("No available phone numbers to assign.")
+                return None
+
+        assistant_id = self._get_assistant_id(user_id)
+        if not assistant_id:
+            logger.error(f"Cannot setup phone: No assistant found for user '{user_id}'.")
+            return None
+
+        # --- HANDLE EXISTING NUMBERS ---
+
+        # 1. Check if the phone number already exists in Vapi
+        try:
+            response = requests.get(f"{self.vapi_base_url}/phone-number", headers=self.vapi_headers)
+            if response.status_code == 200:
+                all_numbers = response.json()
+                existing_number = next((num for num in all_numbers if num.get('number') == phone_number), None)
+
+                if existing_number:
+                    # 2. If it exists, check if it's already correctly configured
+                    if existing_number.get('assistantId') == assistant_id:
+                        logger.info(f"Phone number {phone_number} already exists and is correctly configured.")
+                        self._store_phone_number(user_id, phone_number, existing_number['id'])
+                        return existing_number
+                    else:
+                        # 3. If it exists but is misconfigured (no assistant or wrong assistant), UPDATE it.
+                        logger.warning(f"Number {phone_number} exists but is misconfigured. Updating it now.")
+                        update_payload = {"assistantId": assistant_id}
+                        patch_response = requests.patch(
+                            f"{self.vapi_base_url}/phone-number/{existing_number['id']}",
+                            headers=self.vapi_headers,
+                            json=update_payload
+                        )
+                        if patch_response.status_code == 200:
+                            updated_data = patch_response.json()
+                            self._store_phone_number(user_id, phone_number, updated_data['id'])
+                            return updated_data
+                        else:
+                            logger.error(f"Failed to update phone number: {patch_response.text}")
+                            return None
+            else:
+                logger.warning("Could not retrieve existing phone numbers. Proceeding with creation attempt.")
+        except Exception as e:
+            logger.error(f"Error checking for existing phone numbers: {str(e)}")
+
+        # 4. If the number does not exist at all, create it.
+        logger.info(f"Phone number {phone_number} not found. Creating a new configuration.")
+        phone_config = {
+            "provider": "twilio",
+            "number": phone_number,
+            "twilioAccountSid": self.twilio_account_sid,
+            "twilioAuthToken": self.twilio_auth_token,
+            "assistantId": assistant_id
+        }
+        
+        try:
+            response = requests.post(
+                f"{self.vapi_base_url}/phone-number",
+                headers=self.vapi_headers,
+                json=phone_config
+            )
+            
+            if response.status_code == 201:
+                phone_data = response.json()
+                self._store_phone_number(user_id, phone_number, phone_data['id'])
+                return phone_data
+            else:
+                logger.error(f"Failed to create new phone number configuration: {response.text}")
+                return None
+        except Exception as e:
+            logger.error(f"Error creating new phone number configuration: {str(e)}")
+            return None
+
+    def handle_call_webhook(self, webhook_data: Dict) -> Dict:
+        """Handle incoming webhooks from Vapi for call events"""
+        
+        event_type = webhook_data.get('message', {}).get('type')
+        
+        if event_type == 'call-start':
+            return self._handle_call_start(webhook_data)
+        elif event_type == 'call-end':
+            return self._handle_call_end(webhook_data)
+        elif event_type == 'transcript':
+            return self._handle_transcript_update(webhook_data)
+        else:
+            logger.info(f"Unhandled webhook event: {event_type}")
+            return {"status": "received"}
+
+    def _handle_call_start(self, webhook_data: Dict) -> Dict:
+        """Handle call start event"""
+        call_data = webhook_data.get('message', {}).get('call', {})
+        call_id = call_data.get('id')
+        caller_number = call_data.get('customer', {}).get('number')
+        
+        # Log call start in backend
+        call_log_data = {
+            "call_id": call_id,
+            "caller_phone": caller_number,
+            "status": "started",
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        self._create_call_log(call_log_data)
+        
+        return {"status": "call_started", "call_id": call_id}
+
+    def _handle_call_end(self, webhook_data: Dict) -> Dict:
+        """Handle call end event and generate summary"""
+        call_data = webhook_data.get('message', {}).get('call', {})
+        call_id = call_data.get('id')
+        
+        # Get call details
+        call_details = self._get_call_details(call_id)
+        
+        if call_details:
+            # Generate call summary
+            summary = self._generate_call_summary(call_details)
+            
+            # Store summary in backend
+            self._store_call_summary(call_id, summary)
+            
+            # Send notification to user
+            self._send_call_notification(call_details.get('assistantId'), summary)
+            
+        return {"status": "call_ended", "call_id": call_id}
+
+    def _handle_transcript_update(self, webhook_data: Dict) -> Dict:
+        """Handle real-time transcript updates"""
+        transcript_data = webhook_data.get('message', {}).get('transcript', {})
+        call_id = webhook_data.get('message', {}).get('call', {}).get('id')
+        
+        # Update transcript in real-time
+        self._update_call_transcript(call_id, transcript_data)
+        
+        return {"status": "transcript_updated"}
+
+    def _build_system_message(self, business_info: Dict, knowledge_data: List[Dict]) -> str:
+        """Build comprehensive system message for AI assistant"""
+        
+        business_name = business_info.get('business_name', 'the business')
+        services = business_info.get('services', '')
+        availability = business_info.get('availability', 'Monday to Friday, 9 AM to 5 PM')
+        booking_link = business_info.get('booking_link', '')
+        
+        knowledge_context = ""
+        if knowledge_data:
+            knowledge_context = "\n\nBusiness Knowledge:\n"
+            for item in knowledge_data:
+                knowledge_context += f"- {item.get('question', '')}: {item.get('answer', '')}\n"
+        
+        system_message = f"""
+        You are Orani, a professional AI phone assistant for {business_name}. 
+
+        BUSINESS INFORMATION:
+        - Services: {services}
+        - Availability: {availability}
+        - Booking: {booking_link if booking_link else 'Available upon request'}
+
+        YOUR ROLE:
+        - Answer calls professionally and courteously
+        - Provide information about services and availability
+        - Capture caller details and inquiries
+        - Schedule appointments when possible
+        - Take detailed messages for follow-up
+
+        CONVERSATION GUIDELINES:
+        - Always be professional, friendly, and helpful
+        - Speak naturally like a human receptionist
+        - Keep responses concise but informative
+        - Ask clarifying questions when needed
+        - Capture important details like name, phone, and specific needs
+        - If you can't answer something, politely offer to take a message
+
+        IMPORTANT CAPABILITIES:
+        - You can access real-time calendar availability
+        - You can schedule appointments directly
+        - You can send booking confirmations
+        - You can transfer urgent calls when needed
+
+        {knowledge_context}
+
+        Always end calls by confirming next steps and thanking the caller.
+        """
+        
+        return system_message.strip()
+
+    def _get_call_details(self, call_id: str) -> Dict:
+        """Get detailed call information from Vapi"""
+        try:
+            response = requests.get(
+                f"{self.vapi_base_url}/call/{call_id}",
+                headers=self.vapi_headers
+            )
+            
+            if response.status_code == 200:
+                return response.json()
+            else:
+                logger.error(f"Failed to get call details: {response.text}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error getting call details: {str(e)}")
+            return None
+
+    def _generate_call_summary(self, call_details: Dict) -> CallSummary:
+        """Generate AI-powered call summary"""
+        transcript = call_details.get('transcript', '')
+        call_id = call_details.get('id')
+        caller_number = call_details.get('customer', {}).get('number', '')
+        duration = call_details.get('endedAt', 0) - call_details.get('startedAt', 0)
+        
+        # Use GPT to generate summary and extract key points
+        summary_prompt = f"""
+        Analyze this call transcript and provide:
+        1. A brief summary (2-3 sentences)
+        2. Key points discussed
+        3. Any action items or follow-ups needed
+        4. Caller's main intent/request
+
+        Transcript:
+        {transcript}
+        """
+        
+        # Call to OpenAI or your preferred AI service for summarization
+        summary_text, key_points = self._ai_summarize(summary_prompt)
+        
+        return CallSummary(
+            call_id=call_id,
+            caller_phone=caller_number,
+            duration=duration,
+            transcript=transcript,
+            summary=summary_text,
+            key_points=key_points,
+            timestamp=datetime.now()
+        )
+
+    def _ai_summarize(self, prompt: str) -> tuple:
+        """Use AI to summarize call content"""
+        # Implement your preferred AI summarization here
+        # This could be OpenAI, Anthropic, or any other AI service
+        
+        # Placeholder implementation
+        summary = "Call summary generated by AI"
+        key_points = ["Point 1", "Point 2", "Point 3"]
+        
+        return summary, key_points
+
+    def _get_available_numbers(self, area_code: str = None) -> List[Dict]:
+        """Get available phone numbers from Vapi"""
+        params = {"countryCode": "US"}
+        if area_code:
+            params["areaCode"] = area_code
+            
+        try:
+            response = requests.get(
+                f"{self.vapi_base_url}/phone-number/available",
+                headers=self.vapi_headers,
+                params=params
+            )
+            
+            if response.status_code == 200:
+                return response.json()
+            else:
+                logger.error(f"Failed to get available numbers: {response.text}")
+                return []
+                
+        except Exception as e:
+            logger.error(f"Error getting available numbers: {str(e)}")
+            return []
+
+    # Backend API integration methods
+    def _get_business_knowledge(self, user_id: str) -> List[Dict]:
+        """Get business knowledge from Django backend"""
+        try:
+            response = requests.get(
+                f"{self.backend_api_url}/api/users/{user_id}/knowledge/",
+                headers=self.backend_headers
+            )
+            
+            if response.status_code == 200:
+                return response.json()
+            else:
+                return []
+                
+        except Exception as e:
+            logger.error(f"Error getting business knowledge: {str(e)}")
+            return []
+
+    def _store_assistant_id(self, user_id: str, assistant_id: str) -> bool:
+        """Store assistant ID in Django backend"""
+        try:
+            response = requests.post(
+                f"{self.backend_api_url}/api/users/{user_id}/assistant/",
+                headers=self.backend_headers,
+                json={"assistant_id": assistant_id}
+            )
+            
+            return response.status_code == 201
+            
+        except Exception as e:
+            logger.error(f"Error storing assistant ID: {str(e)}")
+            return False
+
+    # THIS IS THE NEW, TEMPORARY CODE
+    def _get_assistant_id(self, user_id: str) -> str:
+        """
+        Temporarily returns a hardcoded assistant ID for testing.
+        This bypasses the need for a working backend connection.
+        """
+        # --- PASTE THE ID YOU COPIED FROM POSTMAN HERE ---
+        hardcoded_assistant_id = "40473741-6808-473f-bb22-c0d733206005" 
+        
+        print(f"--- DEBUG: USING HARDCODED ASSISTANT ID: {hardcoded_assistant_id} ---")
+        
+        return hardcoded_assistant_id
+
+    def _store_phone_number(self, user_id: str, phone_number: str, vapi_phone_id: str) -> bool:
+        """Store phone number configuration in Django backend"""
+        try:
+            response = requests.post(
+                f"{self.backend_api_url}/api/users/{user_id}/phone/",
+                headers=self.backend_headers,
+                json={
+                    "phone_number": phone_number,
+                    "vapi_phone_id": vapi_phone_id
+                }
+            )
+            
+            return response.status_code == 201
+            
+        except Exception as e:
+            logger.error(f"Error storing phone number: {str(e)}")
+            return False
+
+    def _create_call_log(self, call_data: Dict) -> bool:
+        """Create call log entry in Django backend"""
+        try:
+            response = requests.post(
+                f"{self.backend_api_url}/api/calls/",
+                headers=self.backend_headers,
+                json=call_data
+            )
+            
+            return response.status_code == 201
+            
+        except Exception as e:
+            logger.error(f"Error creating call log: {str(e)}")
+            return False
+
+    def _store_call_summary(self, call_id: str, summary: CallSummary) -> bool:
+        """Store call summary in Django backend"""
+        try:
+            summary_data = {
+                "call_id": call_id,
+                "caller_phone": summary.caller_phone,
+                "duration": summary.duration,
+                "transcript": summary.transcript,
+                "summary": summary.summary,
+                "key_points": summary.key_points,
+                "timestamp": summary.timestamp.isoformat()
+            }
+            
+            response = requests.post(
+                f"{self.backend_api_url}/api/calls/{call_id}/summary/",
+                headers=self.backend_headers,
+                json=summary_data
+            )
+            
+            return response.status_code == 201
+            
+        except Exception as e:
+            logger.error(f"Error storing call summary: {str(e)}")
+            return False
+
+    def _update_call_transcript(self, call_id: str, transcript_data: Dict) -> bool:
+        """Update call transcript in real-time"""
+        try:
+            response = requests.patch(
+                f"{self.backend_api_url}/api/calls/{call_id}/transcript/",
+                headers=self.backend_headers,
+                json=transcript_data
+            )
+            
+            return response.status_code == 200
+            
+        except Exception as e:
+            logger.error(f"Error updating transcript: {str(e)}")
+            return False
+
+    def _send_call_notification(self, assistant_id: str, summary: CallSummary) -> bool:
+        """Send notification about completed call"""
+        try:
+            notification_data = {
+                "type": "call_completed",
+                "call_id": summary.call_id,
+                "caller": summary.caller_phone,
+                "summary": summary.summary,
+                "timestamp": summary.timestamp.isoformat()
+            }
+            
+            response = requests.post(
+                f"{self.backend_api_url}/api/notifications/",
+                headers=self.backend_headers,
+                json=notification_data
+            )
+            
+            return response.status_code == 201
+            
+        except Exception as e:
+            logger.error(f"Error sending notification: {str(e)}")
+            return False
