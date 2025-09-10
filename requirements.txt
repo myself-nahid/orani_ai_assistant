@@ -1,3 +1,5 @@
+fastapi
+uvicorn[standard]
 requests
 python-dotenv
 pydantic_settings
