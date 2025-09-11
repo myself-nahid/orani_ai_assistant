@@ -487,7 +487,7 @@ class OraniAIAssistant:
         This bypasses the need for a working backend connection.
         """
         # --- PASTE THE ID YOU COPIED FROM POSTMAN HERE ---
-        hardcoded_assistant_id = "9df2cd89-8f4c-4342-853b-5215fb8d4c22" 
+        hardcoded_assistant_id = "141f888e-00f1-46f3-b188-0f36b825f62e" 
         
         print(f"--- DEBUG: USING HARDCODED ASSISTANT ID: {hardcoded_assistant_id} ---")
         
@@ -588,3 +588,53 @@ class OraniAIAssistant:
         except Exception as e:
             logger.error(f"Error sending notification: {str(e)}")
             return False
+
+    def make_outbound_call(self, user_id: str, phone_number_to_call: str) -> Dict:
+        """Initiate an outbound call from the AI assistant to a customer."""
+        
+        assistant_id = self._get_assistant_id(user_id)
+        if not assistant_id:
+            logger.error(f"Cannot make outbound call: No assistant found for user '{user_id}'.")
+            return None
+            
+        your_vapi_phone_id = "46d65e1d-7d95-4e17-aeeb-e24fe94dda8c" 
+        
+        logger.info(f"Attempting to make outbound call from assistant {assistant_id} to {phone_number_to_call}")
+        
+        # FINAL CORRECTED PAYLOAD
+        outbound_call_config = {
+            "assistantId": assistant_id,
+            "phoneNumberId": your_vapi_phone_id,
+            "customer": {
+                "number": phone_number_to_call
+            },
+            "type": "outboundPhoneCall" 
+        }
+        
+        try:
+            response = requests.post(
+                f"{self.vapi_base_url}/call",
+                headers=self.vapi_headers,
+                json=outbound_call_config
+            )
+            
+            if response.status_code == 201:
+                call_data = response.json()
+                
+                outbound_log = {
+                    "call_id": call_data.get("id"),
+                    "direction": "Outgoing",
+                    "status": call_data.get("status"),
+                    "recipient_phone": phone_number_to_call,
+                    "timestamp": datetime.now().isoformat()
+                }
+                print("\n--- 📞 OUTGOING CALL INITIATED ---", outbound_log)
+                
+                return call_data
+            else:
+                logger.error(f"Failed to make outbound call: {response.text}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error making outbound call: {str(e)}")
+            return None
