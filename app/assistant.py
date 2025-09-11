@@ -51,6 +51,7 @@ class OraniAIAssistant:
         
         assistant_config = {
             "name": f"Orani Assistant - {business_info.get('business_name', 'Professional')}",
+            "serverUrl": f"https://e177403aa007.ngrok-free.app/webhook/vapi",
             "model": {
                 "provider": "openai",
                 "model": "gpt-4",
@@ -63,8 +64,8 @@ class OraniAIAssistant:
             },
             "voice": {
                 "provider": "11labs",
-                "voiceId": "21m00Tcm4TlvDq8ikWAM",  # Default professional voice (ElevenLabs)
-                "speed": 1.0,
+                "voiceId": "pNInz6obpgDQGcFmaJgB",  # Default professional voice (ElevenLabs)
+                "speed": 0.75,
                 "stability": 0.5,
                 "similarityBoost": 0.75
             },
@@ -244,6 +245,8 @@ class OraniAIAssistant:
         """Handle real-time transcript updates"""
         transcript_data = webhook_data.get('message', {}).get('transcript', {})
         call_id = webhook_data.get('message', {}).get('call', {}).get('id')
+
+        print(f"Conversation - Role: {transcript_data.get('role')}, Transcript: {transcript_data.get('transcript')}")
         
         # Update transcript in real-time
         self._update_call_transcript(call_id, transcript_data)
@@ -424,7 +427,7 @@ class OraniAIAssistant:
         This bypasses the need for a working backend connection.
         """
         # --- PASTE THE ID YOU COPIED FROM POSTMAN HERE ---
-        hardcoded_assistant_id = "40473741-6808-473f-bb22-c0d733206005" 
+        hardcoded_assistant_id = "ad228103-451a-4ae0-8ba0-6cd68db3054c" 
         
         print(f"--- DEBUG: USING HARDCODED ASSISTANT ID: {hardcoded_assistant_id} ---")
         
