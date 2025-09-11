@@ -5,6 +5,8 @@ from typing import Dict, List, Optional
 from datetime import datetime
 import logging
 from dataclasses import dataclass
+import google.generativeai as genai
+from app.config import settings
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -18,8 +20,10 @@ class CallSummary:
     caller_phone: str
     duration: int
     transcript: str
-    summary: str
-    key_points: List[str]
+    summary: str           # The paragraph summary
+    key_points: List[str]  # The to-do list / action items
+    outcome: str           # The result of the call
+    caller_intent: str     # The reason for the call
     timestamp: datetime
 
 class OraniAIAssistant:
@@ -195,7 +199,7 @@ class OraniAIAssistant:
         
         if event_type == 'call-start':
             return self._handle_call_start(webhook_data)
-        elif event_type == 'call-end':
+        elif event_type == 'end-of-call-report':
             return self._handle_call_end(webhook_data)
         elif event_type == 'transcript':
             return self._handle_transcript_update(webhook_data)
@@ -221,23 +225,87 @@ class OraniAIAssistant:
         
         return {"status": "call_started", "call_id": call_id}
 
+    # In app/assistant.py, replace the whole _handle_call_end function with this.
+
     def _handle_call_end(self, webhook_data: Dict) -> Dict:
-        """Handle call end event and generate summary"""
+        """Handle call end event, generate summary, and create a to-do list."""
+        print("\n--- ✅ `call-end` WEBHOOK RECEIVED. Starting summary process... ---\n")
         call_data = webhook_data.get('message', {}).get('call', {})
         call_id = call_data.get('id')
         
-        # Get call details
+        # 1. Get the full call details from Vapi
         call_details = self._get_call_details(call_id)
         
         if call_details:
-            # Generate call summary
-            summary = self._generate_call_summary(call_details)
+            transcript = call_details.get('transcript', '')
+            caller_number = call_details.get('customer', {}).get('number', '')
             
-            # Store summary in backend
-            self._store_call_summary(call_id, summary)
+            # 2. Calculate the call duration
+            duration = 0
+            ended_at_str = call_details.get('endedAt')
+            started_at_str = call_details.get('startedAt')
+            if ended_at_str and started_at_str:
+                end_time = datetime.fromisoformat(ended_at_str.replace("Z", "+00:00"))
+                start_time = datetime.fromisoformat(started_at_str.replace("Z", "+00:00"))
+                duration = int((end_time - start_time).total_seconds())
+
+            # 3. Define the specific prompt for the summarization AI
+            # THIS IS A *DIFFERENT* PROMPT FROM THE ONE THE ASSISTANT USES TO TALK
+            summary_prompt = f"""
+            Analyze the following phone call transcript and provide a structured summary in JSON format.
+
+            **Transcript:**
+            ---
+            {transcript}
+            ---
+
+            **Instructions:**
+            Based on the transcript, extract the following information and format it as a JSON object with these exact keys: "caller_intent", "summary", "action_items", and "outcome".
+
+            - "caller_intent": A short, one-sentence description of why the caller was calling.
+            - "summary": A concise paragraph summarizing the conversation.
+            - "action_items": A list of clear, actionable to-do items for the business owner. If no actions are needed, provide an empty list [].
+            - "outcome": The result of the call (e.g., "Message taken," "Appointment scheduled," "Question answered").
+
+            Provide only the raw JSON object as the output.
+            """
+
+            # 4. Call the AI to get the structured summary data (this is the function from the previous step)
+            summary_data = self._ai_summarize(summary_prompt)
             
-            # Send notification to user
-            self._send_call_notification(call_details.get('assistantId'), summary)
+            # 5. Create the detailed CallSummary object using the data
+            summary = CallSummary(
+                call_id=call_id,
+                caller_phone=caller_number,
+                duration=duration,
+                transcript=transcript,
+                summary=summary_data.get("summary", "Summary not available."),
+                key_points=summary_data.get("action_items", []), # This is your to-do list
+                outcome=summary_data.get("outcome", "Outcome not determined."),
+                caller_intent=summary_data.get("caller_intent", "Intent not determined."),
+                timestamp=datetime.now()
+            )
+
+            # --- TEMPORARY DEBUGGING ---
+            # Instead of saving to the DB, we will print the final object here.
+            print("\n" + "="*50)
+            print("🎉 COMPLETE CALL SUMMARY (This would be saved to the database) 🎉")
+            print("="*50)
+            print(f"Call ID: {summary.call_id}")
+            print(f"Caller Phone: {summary.caller_phone}")
+            print(f"Duration: {summary.duration} seconds")
+            print(f"Caller Intent: {summary.caller_intent}")
+            print(f"Outcome: {summary.outcome}")
+            print("\n--- Summary ---")
+            print(summary.summary)
+            print("\n--- To-Do List (Action Items) ---")
+            for item in summary.key_points:
+                print(f"- {item}")
+            print("\n" + "="*50 + "\n")
+            # -------------------------
+            # 6. Store the summary and send notifications as before
+            # self._store_call_summary(call_id, summary)
+            # self._send_call_notification(call_details.get('assistantId'), summary)
             
         return {"status": "call_ended", "call_id": call_id}
 
@@ -321,71 +389,63 @@ class OraniAIAssistant:
             logger.error(f"Error getting call details: {str(e)}")
             return None
 
-    def _generate_call_summary(self, call_details: Dict) -> CallSummary:
-        """Generate AI-powered call summary"""
-        transcript = call_details.get('transcript', '')
-        call_id = call_details.get('id')
-        caller_number = call_details.get('customer', {}).get('number', '')
-        duration = call_details.get('endedAt', 0) - call_details.get('startedAt', 0)
-        
-        # Use GPT to generate summary and extract key points
-        summary_prompt = f"""
-        Analyze this call transcript and provide:
-        1. A brief summary (2-3 sentences)
-        2. Key points discussed
-        3. Any action items or follow-ups needed
-        4. Caller's main intent/request
+    def _ai_summarize(self, prompt: str) -> dict:
+        """Use Google's Gemini API to generate a structured summary."""
+        try:
+            genai.configure(api_key=settings.GOOGLE_API_KEY)
 
-        Transcript:
-        {transcript}
-        """
-        
-        # Call to OpenAI or your preferred AI service for summarization
-        summary_text, key_points = self._ai_summarize(summary_prompt)
-        
-        return CallSummary(
-            call_id=call_id,
-            caller_phone=caller_number,
-            duration=duration,
-            transcript=transcript,
-            summary=summary_text,
-            key_points=key_points,
-            timestamp=datetime.now()
-        )
+            generation_config = {
+                "temperature": 0.5,
+                "response_mime_type": "application/json", 
+            }
+            
+            model = genai.GenerativeModel(
+                model_name="gemini-2.5-flash",
+                generation_config=generation_config,
+                system_instruction="You are an expert assistant that analyzes call transcripts and provides structured JSON output based on user instructions."
+            )
 
-    def _ai_summarize(self, prompt: str) -> tuple:
-        """Use AI to summarize call content"""
-        # Implement your preferred AI summarization here
-        # This could be OpenAI, Anthropic, or any other AI service
-        
-        # Placeholder implementation
-        summary = "Call summary generated by AI"
-        key_points = ["Point 1", "Point 2", "Point 3"]
-        
-        return summary, key_points
+            response = model.generate_content(prompt)
+            
+            json_string = response.text
+            print("--- RAW JSON FROM GEMINI ---", json_string)
+            data = json.loads(json_string)
+            
+            return data
+
+        except Exception as e:
+            logger.error(f"Error generating AI summary with Gemini: {str(e)}")
+            
+            fallback_data = {
+                "caller_intent": "Could not determine intent.",
+                "summary": "AI summary failed to generate.",
+                "action_items": ["Manually review call transcript due to Gemini API error."],
+                "outcome": "Unknown"
+            }
+            return fallback_data
 
     def _get_available_numbers(self, area_code: str = None) -> List[Dict]:
-        """Get available phone numbers from Vapi"""
-        params = {"countryCode": "US"}
-        if area_code:
-            params["areaCode"] = area_code
-            
-        try:
-            response = requests.get(
-                f"{self.vapi_base_url}/phone-number/available",
-                headers=self.vapi_headers,
-                params=params
-            )
-            
-            if response.status_code == 200:
-                return response.json()
-            else:
-                logger.error(f"Failed to get available numbers: {response.text}")
-                return []
+            """Get available phone numbers from Vapi"""
+            params = {"countryCode": "US"}
+            if area_code:
+                params["areaCode"] = area_code
                 
-        except Exception as e:
-            logger.error(f"Error getting available numbers: {str(e)}")
-            return []
+            try:
+                response = requests.get(
+                    f"{self.vapi_base_url}/phone-number/available",
+                    headers=self.vapi_headers,
+                    params=params
+                )
+                
+                if response.status_code == 200:
+                    return response.json()
+                else:
+                    logger.error(f"Failed to get available numbers: {response.text}")
+                    return []
+                    
+            except Exception as e:
+                logger.error(f"Error getting available numbers: {str(e)}")
+                return []
 
     # Backend API integration methods
     def _get_business_knowledge(self, user_id: str) -> List[Dict]:
@@ -427,7 +487,7 @@ class OraniAIAssistant:
         This bypasses the need for a working backend connection.
         """
         # --- PASTE THE ID YOU COPIED FROM POSTMAN HERE ---
-        hardcoded_assistant_id = "ad228103-451a-4ae0-8ba0-6cd68db3054c" 
+        hardcoded_assistant_id = "9df2cd89-8f4c-4342-853b-5215fb8d4c22" 
         
         print(f"--- DEBUG: USING HARDCODED ASSISTANT ID: {hardcoded_assistant_id} ---")
         
