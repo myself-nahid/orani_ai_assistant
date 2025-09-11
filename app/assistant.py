@@ -68,8 +68,8 @@ class OraniAIAssistant:
             },
             "voice": {
                 "provider": "11labs",
-                "voiceId": "pNInz6obpgDQGcFmaJgB",  # Default professional voice (ElevenLabs)
-                "speed": 0.75,
+                "voiceId": "ys3XeJJA4ArWMhRpcX1D",  # Default professional voice (ElevenLabs)
+                "speed": 1.0,
                 "stability": 0.5,
                 "similarityBoost": 0.75
             },
@@ -480,14 +480,13 @@ class OraniAIAssistant:
             logger.error(f"Error storing assistant ID: {str(e)}")
             return False
 
-    # THIS IS THE NEW, TEMPORARY CODE
+    # TEMPORARY CODE
     def _get_assistant_id(self, user_id: str) -> str:
         """
         Temporarily returns a hardcoded assistant ID for testing.
         This bypasses the need for a working backend connection.
         """
-        # --- PASTE THE ID YOU COPIED FROM POSTMAN HERE ---
-        hardcoded_assistant_id = "141f888e-00f1-46f3-b188-0f36b825f62e" 
+        hardcoded_assistant_id = "26a2a220-8505-4c16-9a06-8c9df819ce62" 
         
         print(f"--- DEBUG: USING HARDCODED ASSISTANT ID: {hardcoded_assistant_id} ---")
         
