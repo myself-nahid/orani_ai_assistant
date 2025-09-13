@@ -486,7 +486,7 @@ class OraniAIAssistant:
         Temporarily returns a hardcoded assistant ID for testing.
         This bypasses the need for a working backend connection.
         """
-        hardcoded_assistant_id = "26a2a220-8505-4c16-9a06-8c9df819ce62" 
+        hardcoded_assistant_id = "197ee1fd-a923-48cf-bfe4-f90e99f49046" 
         
         print(f"--- DEBUG: USING HARDCODED ASSISTANT ID: {hardcoded_assistant_id} ---")
         
@@ -588,26 +588,29 @@ class OraniAIAssistant:
             logger.error(f"Error sending notification: {str(e)}")
             return False
 
-    def make_outbound_call(self, user_id: str, phone_number_to_call: str) -> Dict:
+    def make_outbound_call(self, user_id: str, from_number: str, phone_number_to_call: str) -> Dict:
         """Initiate an outbound call from the AI assistant to a customer."""
         
         assistant_id = self._get_assistant_id(user_id)
         if not assistant_id:
             logger.error(f"Cannot make outbound call: No assistant found for user '{user_id}'.")
             return None
-            
-        your_vapi_phone_id = "46d65e1d-7d95-4e17-aeeb-e24fe94dda8c" 
         
-        logger.info(f"Attempting to make outbound call from assistant {assistant_id} to {phone_number_to_call}")
+        # Dynamically find the phone number ID using the provided "from_number"
+        vapi_phone_id = self._get_vapi_phone_id_from_number(from_number)
+        if not vapi_phone_id:
+            logger.error(f"Failed to make outbound call because the 'from' number '{from_number}' could not be found or verified.")
+            return None
         
-        # FINAL CORRECTED PAYLOAD
+        logger.info(f"Attempting outbound call from {from_number} to {phone_number_to_call} using assistant {assistant_id}")
+        
         outbound_call_config = {
             "assistantId": assistant_id,
-            "phoneNumberId": your_vapi_phone_id,
+            "phoneNumberId": vapi_phone_id, # Use the dynamically found ID
             "customer": {
                 "number": phone_number_to_call
             },
-            "type": "outboundPhoneCall" 
+            "type": "outboundPhoneCall"
         }
         
         try:
@@ -623,12 +626,11 @@ class OraniAIAssistant:
                 outbound_log = {
                     "call_id": call_data.get("id"),
                     "direction": "Outgoing",
-                    "status": call_data.get("status"),
+                    "from_number": from_number,
                     "recipient_phone": phone_number_to_call,
                     "timestamp": datetime.now().isoformat()
                 }
                 print("\n--- 📞 OUTGOING CALL INITIATED ---", outbound_log)
-                
                 return call_data
             else:
                 logger.error(f"Failed to make outbound call: {response.text}")
@@ -636,4 +638,28 @@ class OraniAIAssistant:
                 
         except Exception as e:
             logger.error(f"Error making outbound call: {str(e)}")
+            return None
+
+    def _get_vapi_phone_id_from_number(self, phone_number_string: str) -> Optional[str]:
+        """
+        Translates a phone number string (e.g., +15551234567) into its Vapi phone_id.
+        """
+        try:
+            response = requests.get(f"{self.vapi_base_url}/phone-number", headers=self.vapi_headers)
+            if response.status_code == 200:
+                all_numbers = response.json()
+                # Find the number object that matches the string
+                matching_number = next((num for num in all_numbers if num.get('number') == phone_number_string), None)
+                
+                if matching_number:
+                    logger.info(f"Found phone ID for {phone_number_string}: {matching_number.get('id')}")
+                    return matching_number.get('id')
+                else:
+                    logger.error(f"Could not find a configured phone number matching {phone_number_string} in Vapi.")
+                    return None
+            else:
+                logger.error("Failed to retrieve phone numbers from Vapi to find ID.")
+                return None
+        except Exception as e:
+            logger.error(f"Error looking up phone number ID: {str(e)}")
             return None

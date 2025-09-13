@@ -7,6 +7,7 @@ router = APIRouter()
 
 class OutboundCallRequest(BaseModel):
     user_id: str
+    from_number: str
     phone_number_to_call: str
 
 @router.post("/outbound")
@@ -17,6 +18,7 @@ def trigger_outbound_call(
     """Endpoint to initiate an outbound call from the assistant."""
     call_result = orani.make_outbound_call(
         user_id=payload.user_id,
+        from_number=payload.from_number, 
         phone_number_to_call=payload.phone_number_to_call
     )
     
