@@ -4,3 +4,4 @@ requests
 python-dotenv
 pydantic_settings
 google-generativeai
+sqlmodel

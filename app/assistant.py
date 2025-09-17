@@ -7,7 +7,9 @@ import logging
 from dataclasses import dataclass
 import google.generativeai as genai
 from app.config import settings
-
+from app.database import engine
+from app.models import Assistant, CallSummaryDB
+from sqlmodel import Session, select
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -48,13 +50,19 @@ class OraniAIAssistant:
         """Create a Vapi assistant with custom business knowledge"""
         
         # Get business knowledge from backend
-        knowledge_data = self._get_business_knowledge(user_id)
+        #knowledge_data = self._get_business_knowledge(user_id)
         
         # Create system message with business context
-        system_message = self._build_system_message(business_info, knowledge_data)
-        
+        system_message = self._build_system_message(business_info)
+        # --- ADD THIS BLOCK FOR DEBUGGING ---
+        print("\n" + "="*50)
+        print("🤖 NEW AI ASSISTANT SYSTEM PROMPT 🤖")
+        print("="*50)
+        print(system_message)
+        print("="*50 + "\n")
+        # ------------------------------------
         assistant_config = {
-            "name": f"Orani Assistant - {business_info.get('business_name', 'Professional')}",
+            "name": f"Orani Assistant - {business_info.get('company_info', {}).get('business_name', 'Professional')}",
             "serverUrl": f"https://e177403aa007.ngrok-free.app/webhook/vapi",
             "model": {
                 "provider": "openai",
@@ -225,22 +233,16 @@ class OraniAIAssistant:
         
         return {"status": "call_started", "call_id": call_id}
 
-    # In app/assistant.py, replace the whole _handle_call_end function with this.
-
     def _handle_call_end(self, webhook_data: Dict) -> Dict:
-        """Handle call end event, generate summary, and create a to-do list."""
-        print("\n--- ✅ `call-end` WEBHOOK RECEIVED. Starting summary process... ---\n")
+        """Handle call end event, generate summary, and SAVE it to the database."""
         call_data = webhook_data.get('message', {}).get('call', {})
         call_id = call_data.get('id')
         
-        # 1. Get the full call details from Vapi
         call_details = self._get_call_details(call_id)
         
         if call_details:
             transcript = call_details.get('transcript', '')
             caller_number = call_details.get('customer', {}).get('number', '')
-            
-            # 2. Calculate the call duration
             duration = 0
             ended_at_str = call_details.get('endedAt')
             started_at_str = call_details.get('startedAt')
@@ -249,8 +251,6 @@ class OraniAIAssistant:
                 start_time = datetime.fromisoformat(started_at_str.replace("Z", "+00:00"))
                 duration = int((end_time - start_time).total_seconds())
 
-            # 3. Define the specific prompt for the summarization AI
-            # THIS IS A *DIFFERENT* PROMPT FROM THE ONE THE ASSISTANT USES TO TALK
             summary_prompt = f"""
             Analyze the following phone call transcript and provide a structured summary in JSON format.
 
@@ -270,42 +270,30 @@ class OraniAIAssistant:
             Provide only the raw JSON object as the output.
             """
 
-            # 4. Call the AI to get the structured summary data (this is the function from the previous step)
             summary_data = self._ai_summarize(summary_prompt)
             
-            # 5. Create the detailed CallSummary object using the data
             summary = CallSummary(
                 call_id=call_id,
                 caller_phone=caller_number,
                 duration=duration,
                 transcript=transcript,
                 summary=summary_data.get("summary", "Summary not available."),
-                key_points=summary_data.get("action_items", []), # This is your to-do list
+                key_points=summary_data.get("action_items", []),
                 outcome=summary_data.get("outcome", "Outcome not determined."),
                 caller_intent=summary_data.get("caller_intent", "Intent not determined."),
                 timestamp=datetime.now()
             )
 
-            # --- TEMPORARY DEBUGGING ---
-            # Instead of saving to the DB, we will print the final object here.
-            print("\n" + "="*50)
-            print("🎉 COMPLETE CALL SUMMARY (This would be saved to the database) 🎉")
-            print("="*50)
-            print(f"Call ID: {summary.call_id}")
-            print(f"Caller Phone: {summary.caller_phone}")
-            print(f"Duration: {summary.duration} seconds")
-            print(f"Caller Intent: {summary.caller_intent}")
-            print(f"Outcome: {summary.outcome}")
-            print("\n--- Summary ---")
-            print(summary.summary)
-            print("\n--- To-Do List (Action Items) ---")
-            for item in summary.key_points:
-                print(f"- {item}")
-            print("\n" + "="*50 + "\n")
-            # -------------------------
-            # 6. Store the summary and send notifications as before
-            # self._store_call_summary(call_id, summary)
-            # self._send_call_notification(call_details.get('assistantId'), summary)
+            assistant_id = call_details.get('assistantId')
+            if assistant_id:
+                user_id = self._get_user_id_from_assistant_id(assistant_id)
+                if user_id:
+                    self._store_call_summary(user_id, summary)
+                    logger.info(f"Successfully stored summary for call {call_id} for user {user_id}.")
+                else:
+                    logger.error("Could not store summary because user could not be found.")
+            else:
+                logger.error("Could not store summary because assistantId was missing in call details.")
             
         return {"status": "call_ended", "call_id": call_id}
 
@@ -321,52 +309,85 @@ class OraniAIAssistant:
         
         return {"status": "transcript_updated"}
 
-    def _build_system_message(self, business_info: Dict, knowledge_data: List[Dict]) -> str:
-        """Build comprehensive system message for AI assistant"""
+    def _build_system_message(self, structured_data: Dict) -> str:
+        """
+        Builds a comprehensive system message for the AI assistant using
+        structured data from the frontend.
+        """
         
-        business_name = business_info.get('business_name', 'the business')
-        services = business_info.get('services', '')
-        availability = business_info.get('availability', 'Monday to Friday, 9 AM to 5 PM')
-        booking_link = business_info.get('booking_link', '')
+        company_info = structured_data.get('company_info', {})
+        price_info = structured_data.get('price_info', [])
+        booking_links = structured_data.get('booking_links', [])
+        phone_numbers = structured_data.get('phone_numbers', [])
+        hours_of_operation = structured_data.get('hours_of_operation', [])
+        knowledge_base = structured_data.get('call_data', []) 
+
+        business_name = company_info.get('business_name', 'the business')
+
+        hours_str = ""
+        if hours_of_operation:
+            hours_str += "\n- Hours of Operation:\n"
+            for hours in hours_of_operation:
+                hours_str += f"  - {hours['day_of_week']}: {hours['open_time']} to {hours['close_time']}\n"
+        elif 'availability' in company_info:
+            hours_str = f"\n- Availability: {company_info['availability']}\n"
+
+        # Services section
+        services_str = ""
+        if 'services' in company_info:
+            services_str = f"\n- General Services: {company_info['services']}\n"
         
-        knowledge_context = ""
-        if knowledge_data:
-            knowledge_context = "\n\nBusiness Knowledge:\n"
-            for item in knowledge_data:
-                knowledge_context += f"- {item.get('question', '')}: {item.get('answer', '')}\n"
+        # Pricing section
+        pricing_str = ""
+        if price_info:
+            pricing_str += "\n- Pricing Information (quote these exactly):\n"
+            for price in price_info:
+                pricing_str += f"  - {price['service_name']}: {price['price']}"
+                if 'description' in price and price['description']:
+                    pricing_str += f" ({price['description']})\n"
+                else:
+                    pricing_str += "\n"
+
+        # Phone Numbers section
+        phones_str = ""
+        if phone_numbers:
+            phones_str += "\n- Important Phone Numbers:\n"
+            for phone in phone_numbers:
+                phones_str += f"  - For {phone['department']}, the number is {phone['number']}.\n"
+
+        # Booking Links section
+        booking_str = ""
+        if booking_links:
+            booking_str += "\n- Booking Information:\n"
+            for link in booking_links:
+                booking_str += f"  - To {link['link_name']}, use this link: {link['url']}\n"
+
+        # Knowledge Base (FAQ) section
+        knowledge_str = ""
+        if knowledge_base:
+            knowledge_str += "\n- Frequently Asked Questions:\n"
+            for item in knowledge_base:
+                knowledge_str += f"  - Q: {item['question']}\n  - A: {item['answer']}\n"
         
         system_message = f"""
-        You are Orani, a professional AI phone assistant for {business_name}. 
+        You are a world-class, professional AI phone assistant for {business_name}. Your tone is helpful, courteous, and efficient.
 
-        BUSINESS INFORMATION:
-        - Services: {services}
-        - Availability: {availability}
-        - Booking: {booking_link if booking_link else 'Available upon request'}
+        **CORE BUSINESS INFORMATION:**
+        {hours_str}
+        {services_str}
+        {pricing_str}
+        {phones_str}
+        {booking_str}
+        {knowledge_str}
 
-        YOUR ROLE:
-        - Answer calls professionally and courteously
-        - Provide information about services and availability
-        - Capture caller details and inquiries
-        - Schedule appointments when possible
-        - Take detailed messages for follow-up
-
-        CONVERSATION GUIDELINES:
-        - Always be professional, friendly, and helpful
-        - Speak naturally like a human receptionist
-        - Keep responses concise but informative
-        - Ask clarifying questions when needed
-        - Capture important details like name, phone, and specific needs
-        - If you can't answer something, politely offer to take a message
-
-        IMPORTANT CAPABILITIES:
-        - You can access real-time calendar availability
-        - You can schedule appointments directly
-        - You can send booking confirmations
-        - You can transfer urgent calls when needed
-
-        {knowledge_context}
-
-        Always end calls by confirming next steps and thanking the caller.
+        **YOUR ROLE & GUIDELINES:**
+        - Your primary goal is to be helpful and provide accurate information based ONLY on the details provided above.
+        - Answer calls professionally and courteously, stating the business name.
+        - If you do not have the information, politely state that you don't have that detail and offer to take a message. DO NOT make up answers.
+        - When asked for pricing, quote the prices exactly as listed.
+        - If a caller wants to book, direct them to the appropriate booking link.
+        - Capture caller details (name, reason for call) and take detailed messages for follow-up if needed.
+        - Always end calls by confirming the next steps and thanking the caller.
         """
         
         return system_message.strip()
@@ -466,31 +487,33 @@ class OraniAIAssistant:
             return []
 
     def _store_assistant_id(self, user_id: str, assistant_id: str) -> bool:
-        """Store assistant ID in Django backend"""
-        try:
-            response = requests.post(
-                f"{self.backend_api_url}/api/users/{user_id}/assistant/",
-                headers=self.backend_headers,
-                json={"assistant_id": assistant_id}
-            )
+        """Saves or updates the assistant ID for a user in our local database."""
+        with Session(engine) as session:
+            # Check if an assistant already exists for this user
+            statement = select(Assistant).where(Assistant.user_id == user_id)
+            existing_assistant = session.exec(statement).first()
             
-            return response.status_code == 201
+            if existing_assistant:
+                # Update the existing record
+                existing_assistant.assistant_id = assistant_id
+                session.add(existing_assistant)
+            else:
+                # Create a new record
+                new_assistant = Assistant(user_id=user_id, assistant_id=assistant_id)
+                session.add(new_assistant)
             
-        except Exception as e:
-            logger.error(f"Error storing assistant ID: {str(e)}")
-            return False
+            session.commit()
+        return True
 
     # TEMPORARY CODE
-    def _get_assistant_id(self, user_id: str) -> str:
-        """
-        Temporarily returns a hardcoded assistant ID for testing.
-        This bypasses the need for a working backend connection.
-        """
-        hardcoded_assistant_id = "197ee1fd-a923-48cf-bfe4-f90e99f49046" 
-        
-        print(f"--- DEBUG: USING HARDCODED ASSISTANT ID: {hardcoded_assistant_id} ---")
-        
-        return hardcoded_assistant_id
+    def _get_assistant_id(self, user_id: str) -> Optional[str]:
+        """Gets the assistant ID for a user from our local database."""
+        with Session(engine) as session:
+            statement = select(Assistant).where(Assistant.user_id == user_id)
+            assistant = session.exec(statement).first()
+            if assistant:
+                return assistant.assistant_id
+            return None
 
     def _store_phone_number(self, user_id: str, phone_number: str, vapi_phone_id: str) -> bool:
         """Store phone number configuration in Django backend"""
@@ -525,30 +548,32 @@ class OraniAIAssistant:
             logger.error(f"Error creating call log: {str(e)}")
             return False
 
-    def _store_call_summary(self, call_id: str, summary: CallSummary) -> bool:
-        """Store call summary in Django backend"""
-        try:
-            summary_data = {
-                "call_id": call_id,
-                "caller_phone": summary.caller_phone,
-                "duration": summary.duration,
-                "transcript": summary.transcript,
-                "summary": summary.summary,
-                "key_points": summary.key_points,
-                "timestamp": summary.timestamp.isoformat()
-            }
-            
-            response = requests.post(
-                f"{self.backend_api_url}/api/calls/{call_id}/summary/",
-                headers=self.backend_headers,
-                json=summary_data
-            )
-            
-            return response.status_code == 201
-            
-        except Exception as e:
-            logger.error(f"Error storing call summary: {str(e)}")
-            return False
+    def _store_call_summary(self, user_id: str, summary: CallSummary) -> bool:
+        """Stores the call summary into our local database."""
+        summary_to_db = CallSummaryDB(
+            user_id=user_id,
+            call_id=summary.call_id,
+            caller_phone=summary.caller_phone,
+            # ... (copy all other fields from the summary object)
+            duration=summary.duration,
+            transcript=summary.transcript,
+            summary=summary.summary,
+            key_points=summary.key_points,
+            outcome=summary.outcome,
+            caller_intent=summary.caller_intent,
+            timestamp=summary.timestamp
+        )
+        with Session(engine) as session:
+            session.add(summary_to_db)
+            session.commit()
+        return True
+    
+    def get_call_summaries_for_user(self, user_id: str) -> Optional[List[CallSummaryDB]]:
+        """Retrieves all call summaries for a user from our local database."""
+        with Session(engine) as session:
+            statement = select(CallSummaryDB).where(CallSummaryDB.user_id == user_id).order_by(CallSummaryDB.timestamp.desc())
+            results = session.exec(statement).all()
+            return results
 
     def _update_call_transcript(self, call_id: str, transcript_data: Dict) -> bool:
         """Update call transcript in real-time"""
@@ -662,4 +687,15 @@ class OraniAIAssistant:
                 return None
         except Exception as e:
             logger.error(f"Error looking up phone number ID: {str(e)}")
+            return None
+        # In assistant.py, add this new function
+
+    def _get_user_id_from_assistant_id(self, assistant_id: str) -> Optional[str]:
+        """Finds which user owns a given assistant by checking our local database."""
+        with Session(engine) as session:
+            statement = select(Assistant).where(Assistant.assistant_id == assistant_id)
+            assistant = session.exec(statement).first()
+            if assistant:
+                return assistant.user_id
+            logger.error(f"Could not find a user for assistant_id: {assistant_id}")
             return None

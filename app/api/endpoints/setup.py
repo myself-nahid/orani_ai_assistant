@@ -10,21 +10,18 @@ logger = logging.getLogger(__name__)
 
 @router.post("/assistant")
 def setup_assistant(
-    payload: AssistantSetupRequest,
+    payload: AssistantSetupRequest, 
     orani: OraniAIAssistant = Depends(get_orani_assistant)
 ):
-    """
-    Create and configure a new Orani AI assistant for a user.
-    """
+    """Create and configure a new Orani AI assistant for a user."""
     try:
         assistant = orani.create_assistant(
             user_id=payload.user_id,
-            business_info=payload.business_info.model_dump() # Convert Pydantic model to dict
+            # Pass the entire dictionary to create_assistant
+            business_info=payload.model_dump() 
         )
         if assistant:
             return {"status": "success", "assistant": assistant}
-        else:
-            raise HTTPException(status_code=500, detail="Failed to create assistant")
     except Exception as e:
         logger.error(f"Setup error: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
