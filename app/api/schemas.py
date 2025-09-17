@@ -1,51 +1,43 @@
 from pydantic import BaseModel, Field
-
-# In app/api/schemas.py
-# Add 'List' to your imports from 'typing'
-from typing import Dict, Any, Optional, List
-
-# Define the shape of each nested object
+from typing import Dict, Any
+from typing import List, Optional
 
 class CompanyInfoSchema(BaseModel):
     business_name: str
-    services: Optional[str] = None
-    availability: Optional[str] = None
-    # Add any other fields that are in CompanyInformationSerializer
+    website_url: Optional[str] = None
+    email: Optional[str] = None
+    company_details: Optional[str] = None
 
 class PriceInfoSchema(BaseModel):
-    service_name: str
-    price: str
-    description: Optional[str] = None
+    package_name: str
+    package_price: str
 
 class BookingLinkSchema(BaseModel):
-    link_name: str
-    url: str
+    booking_title: str
+    booking_link: str
 
 class PhoneNumberSchema(BaseModel):
-    department: str
-    number: str
+    phone_number: str
 
 class HoursOfOperationSchema(BaseModel):
-    day_of_week: str # e.g., "Monday", "Saturday - Sunday"
-    open_time: str   # e.g., "9:00 AM"
-    close_time: str  # e.g., "5:00 PM"
+    days: List[str]  
+    start_time: str
+    end_time: str
 
 class CallDataSchema(BaseModel):
-    # This seems like it might be for call history, not setup.
-    # If it's for setup (e.g., knowledge base), we can adjust.
-    # For now, let's assume a simple structure.
-    question: str
-    answer: str
+    call_types: Optional[List[str]] = None
+    industries: Optional[List[str]] = None
+    work_styles: Optional[List[str]] = None
+    assistances: Optional[List[str]] = None
 
-# This is the main request body model
-class AssistantSetupRequest(BaseModel):
+class AssistantDataPayload(BaseModel):
     user_id: str
     company_info: Optional[CompanyInfoSchema] = None
     price_info: List[PriceInfoSchema] = []
     booking_links: List[BookingLinkSchema] = []
     phone_numbers: List[PhoneNumberSchema] = []
     hours_of_operation: List[HoursOfOperationSchema] = []
-    call_data: List[CallDataSchema] = [] # This will act as our knowledge base
+    call_data: List[CallDataSchema] = []
 
 class PhoneSetupRequest(BaseModel):
     user_id: str = Field(..., description="The unique identifier for the user.")

@@ -3,28 +3,30 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.assistant import OraniAIAssistant
 from app.api.deps import get_orani_assistant
-from app.api.schemas import AssistantSetupRequest, PhoneSetupRequest
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+from app.api.schemas import AssistantDataPayload, PhoneSetupRequest
+
 @router.post("/assistant")
-def setup_assistant(
-    payload: AssistantSetupRequest, 
+def upsert_assistant(
+    payload: AssistantDataPayload,
     orani: OraniAIAssistant = Depends(get_orani_assistant)
 ):
-    """Create and configure a new Orani AI assistant for a user."""
+    """
+    Creates a new assistant or updates an existing one based on the
+    provided business profile data. This is an "upsert" operation.
+    """
     try:
-        assistant = orani.create_assistant(
-            user_id=payload.user_id,
-            # Pass the entire dictionary to create_assistant
-            business_info=payload.model_dump() 
-        )
+        assistant = orani.upsert_assistant_and_profile(payload.model_dump())
         if assistant:
             return {"status": "success", "assistant": assistant}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to create or update assistant.")
     except Exception as e:
-        logger.error(f"Setup error: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        logger.error(f"Upsert error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error during upsert.")
 
 @router.post("/phone")
 def setup_phone(

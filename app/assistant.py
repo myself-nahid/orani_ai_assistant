@@ -11,6 +11,7 @@ from app.database import engine
 from app.models import Assistant, CallSummaryDB
 from sqlmodel import Session, select
 from dotenv import load_dotenv
+from app.models import Assistant, CallSummaryDB, BusinessProfile
 load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
@@ -312,104 +313,95 @@ class OraniAIAssistant:
     def _build_system_message(self, structured_data: Dict) -> str:
         """
         Builds a comprehensive system message for the AI assistant using
-        structured data from the frontend.
+        the exact structured data from the frontend.
         """
         
+        # --- Extract data from the nested structure ---
         company_info = structured_data.get('company_info', {})
         price_info = structured_data.get('price_info', [])
         booking_links = structured_data.get('booking_links', [])
         phone_numbers = structured_data.get('phone_numbers', [])
         hours_of_operation = structured_data.get('hours_of_operation', [])
-        knowledge_base = structured_data.get('call_data', []) 
+        # 'call_data' is now treated as persona/context information
+        persona_data_list = structured_data.get('call_data', []) 
 
         business_name = company_info.get('business_name', 'the business')
 
+        # Build General Services section from 'company_details'
+        services_str = ""
+        if company_info.get('company_details'):
+            services_str += f"- General Services: {company_info['company_details']}\n"
+
+        # Build Hours of Operation section
         hours_str = ""
         if hours_of_operation:
-            hours_str += "\n- Hours of Operation:\n"
+            hours_str += "- Hours of Operation:\n"
             for hours in hours_of_operation:
-                hours_str += f"  - {hours['day_of_week']}: {hours['open_time']} to {hours['close_time']}\n"
-        elif 'availability' in company_info:
-            hours_str = f"\n- Availability: {company_info['availability']}\n"
-
-        # Services section
-        services_str = ""
-        if 'services' in company_info:
-            services_str = f"\n- General Services: {company_info['services']}\n"
+                # Join the list of days into a readable string, e.g., "Sat, Sun, Mon, Tue"
+                days_str = ", ".join(hours.get('days', []))
+                hours_str += f"  - {days_str}: {hours.get('start_time', 'N/A')} to {hours.get('end_time', 'N/A')}\n"
         
-        # Pricing section
+        # Build Pricing section
         pricing_str = ""
         if price_info:
-            pricing_str += "\n- Pricing Information (quote these exactly):\n"
+            pricing_str += "- Pricing Information (quote these exactly):\n"
             for price in price_info:
-                pricing_str += f"  - {price['service_name']}: {price['price']}"
-                if 'description' in price and price['description']:
-                    pricing_str += f" ({price['description']})\n"
-                else:
-                    pricing_str += "\n"
+                # Use 'package_name' and 'package_price'
+                pricing_str += f"  - {price.get('package_name', 'Unnamed Package')}: {price.get('package_price', 'Price not available')}\n"
 
-        # Phone Numbers section
+        # Build Phone Numbers section
         phones_str = ""
         if phone_numbers:
-            phones_str += "\n- Important Phone Numbers:\n"
+            phones_str += "- Important Phone Numbers:\n"
             for phone in phone_numbers:
-                phones_str += f"  - For {phone['department']}, the number is {phone['number']}.\n"
+                # Use 'phone_number'
+                phones_str += f"  - Main Contact Number: {phone.get('phone_number', 'Not available')}\n"
 
-        # Booking Links section
+        # Build Booking Links section
         booking_str = ""
         if booking_links:
-            booking_str += "\n- Booking Information:\n"
+            booking_str += "- Booking Information:\n"
             for link in booking_links:
-                booking_str += f"  - To {link['link_name']}, use this link: {link['url']}\n"
+                # Use 'booking_title' and 'booking_link'
+                booking_str += f"  - For '{link.get('booking_title', 'booking')}', use this link: {link.get('booking_link', 'Not available')}\n"
 
-        # Knowledge Base (FAQ) section
-        knowledge_str = ""
-        if knowledge_base:
-            knowledge_str += "\n- Frequently Asked Questions:\n"
-            for item in knowledge_base:
-                knowledge_str += f"  - Q: {item['question']}\n  - A: {item['answer']}\n"
+        # Build Assistant Persona section from 'call_data'
+        persona_str = ""
+        if persona_data_list:
+            # The data is a list, so we access the first (and likely only) item.
+            persona_data = persona_data_list[0]
+            
+            persona_str += "- Your Specific Tasks & Context:\n"
+            if 'assistances' in persona_data and persona_data['assistances']:
+                persona_str += f"  - Your main tasks are to: {', '.join(persona_data['assistances'])}.\n"
+            if 'call_types' in persona_data and persona_data['call_types']:
+                persona_str += f"  - You will primarily handle: {', '.join(persona_data['call_types'])}.\n"
+            if 'industries' in persona_data and persona_data['industries']:
+                persona_str += f"  - This business is in the {', '.join(persona_data['industries'])} industry.\n"
+        
+        # --- Assemble the final system prompt ---
         
         system_message = f"""
         You are a world-class, professional AI phone assistant for {business_name}. Your tone is helpful, courteous, and efficient.
 
         **CORE BUSINESS INFORMATION:**
-        {hours_str}
         {services_str}
+        {hours_str}
         {pricing_str}
         {phones_str}
         {booking_str}
-        {knowledge_str}
 
         **YOUR ROLE & GUIDELINES:**
+        {persona_str}
         - Your primary goal is to be helpful and provide accurate information based ONLY on the details provided above.
-        - Answer calls professionally and courteously, stating the business name.
         - If you do not have the information, politely state that you don't have that detail and offer to take a message. DO NOT make up answers.
         - When asked for pricing, quote the prices exactly as listed.
-        - If a caller wants to book, direct them to the appropriate booking link.
         - Capture caller details (name, reason for call) and take detailed messages for follow-up if needed.
         - Always end calls by confirming the next steps and thanking the caller.
         """
         
         return system_message.strip()
-
-    def _get_call_details(self, call_id: str) -> Dict:
-        """Get detailed call information from Vapi"""
-        try:
-            response = requests.get(
-                f"{self.vapi_base_url}/call/{call_id}",
-                headers=self.vapi_headers
-            )
-            
-            if response.status_code == 200:
-                return response.json()
-            else:
-                logger.error(f"Failed to get call details: {response.text}")
-                return None
-                
-        except Exception as e:
-            logger.error(f"Error getting call details: {str(e)}")
-            return None
-
+    
     def _ai_summarize(self, prompt: str) -> dict:
         """Use Google's Gemini API to generate a structured summary."""
         try:
@@ -554,7 +546,6 @@ class OraniAIAssistant:
             user_id=user_id,
             call_id=summary.call_id,
             caller_phone=summary.caller_phone,
-            # ... (copy all other fields from the summary object)
             duration=summary.duration,
             transcript=summary.transcript,
             summary=summary.summary,
@@ -631,7 +622,7 @@ class OraniAIAssistant:
         
         outbound_call_config = {
             "assistantId": assistant_id,
-            "phoneNumberId": vapi_phone_id, # Use the dynamically found ID
+            "phoneNumberId": vapi_phone_id, 
             "customer": {
                 "number": phone_number_to_call
             },
@@ -699,3 +690,32 @@ class OraniAIAssistant:
                 return assistant.user_id
             logger.error(f"Could not find a user for assistant_id: {assistant_id}")
             return None
+
+    def upsert_assistant_and_profile(self, payload: Dict) -> Optional[Dict]:
+        """
+        Saves/updates a user's business profile and then creates/updates the Vapi assistant.
+        """
+        user_id = payload.get("user_id")
+        if not user_id:
+            logger.error("Cannot upsert profile: user_id is missing.")
+            return None
+
+        with Session(engine) as session:
+            statement = select(BusinessProfile).where(BusinessProfile.user_id == user_id)
+            existing_profile = session.exec(statement).first()
+            
+            if existing_profile:
+                # Update existing profile
+                existing_profile.profile_data = payload
+                session.add(existing_profile)
+                logger.info(f"Updated business profile for user_id: {user_id}")
+            else:
+                # Create new profile
+                new_profile = BusinessProfile(user_id=user_id, profile_data=payload)
+                session.add(new_profile)
+                logger.info(f"Created new business profile for user_id: {user_id}")
+            
+            session.commit()
+        assistant_data = self.create_assistant(user_id, payload)
+        
+        return assistant_data

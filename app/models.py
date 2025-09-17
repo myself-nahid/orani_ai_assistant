@@ -1,14 +1,17 @@
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from sqlmodel import Field, SQLModel, JSON, Column
 from datetime import datetime
 
-# Table 1: To store the link between a user and their assistant
+class BusinessProfile(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: str = Field(unique=True, index=True)
+    profile_data: Dict = Field(sa_column=Column(JSON))
+
 class Assistant(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: str = Field(unique=True, index=True)
     assistant_id: str
 
-# Table 2: To store the detailed call summaries
 class CallSummaryDB(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     call_id: str = Field(index=True)
