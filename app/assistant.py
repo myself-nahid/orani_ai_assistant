@@ -62,6 +62,7 @@ class OraniAIAssistant:
         print(system_message)
         print("="*50 + "\n")
         # ------------------------------------
+        selected_voice = business_info.get("selected_voice_id", "ys3XeJJA4ArWMhRpcX1D")
         assistant_config = {
             "name": f"Orani Assistant - {business_info.get('company_info', {}).get('business_name', 'Professional')}",
             "serverUrl": f"https://e177403aa007.ngrok-free.app/webhook/vapi",
@@ -77,7 +78,7 @@ class OraniAIAssistant:
             },
             "voice": {
                 "provider": "11labs",
-                "voiceId": "ys3XeJJA4ArWMhRpcX1D",  # Default professional voice (ElevenLabs)
+                "voiceId": selected_voice,  
                 "speed": 1.0,
                 "stability": 0.5,
                 "similarityBoost": 0.75
