@@ -1,6 +1,6 @@
 from fastapi import FastAPI
-from app.api.endpoints import setup, webhooks, calls
-from app.database import create_db_and_tables # <-- Import this
+from app.api.endpoints import setup, webhooks, calls, summaries
+from app.database import create_db_and_tables 
 import json
 from starlette.requests import Request
 
@@ -43,6 +43,7 @@ async def log_request_body(request: Request, call_next):
 app.include_router(setup.router, prefix="/setup", tags=["Setup"])
 app.include_router(webhooks.router, prefix="/webhook", tags=["Webhooks"])
 app.include_router(calls.router, prefix="/call", tags=["Calls"])
+app.include_router(summaries.router, prefix="/summaries", tags=["Summaries"])
 
 @app.get("/", tags=["Root"])
 def read_root():

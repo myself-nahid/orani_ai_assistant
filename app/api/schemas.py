@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field
 from typing import Dict, Any
 from typing import List, Optional
+import datetime
 
 class CompanyInfoSchema(BaseModel):
     business_name: str
@@ -52,3 +53,19 @@ class SuccessResponse(BaseModel):
 
 class ErrorResponse(BaseModel):
     error: str
+
+class CallSummaryResponse(BaseModel):
+    call_id: str
+    caller_phone: str
+    duration: int
+    transcript: str
+    summary: str
+    key_points: List[str]
+    outcome: str
+    caller_intent: str
+    timestamp: datetime
+
+    model_config = {
+        "from_attributes": True,
+        "arbitrary_types_allowed": True
+    }
