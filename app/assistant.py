@@ -286,16 +286,21 @@ class OraniAIAssistant:
                 timestamp=datetime.now()
             )
 
-            assistant_id = call_details.get('assistantId')
-            if assistant_id:
-                user_id = self._get_user_id_from_assistant_id(assistant_id)
-                if user_id:
-                    self._store_call_summary(user_id, summary)
-                    logger.info(f"Successfully stored summary for call {call_id} for user {user_id}.")
+            assistant_id_from_call = call_details.get('assistantId')
+            print(f"\n--- DEBUG: Assistant ID from the live call is: {assistant_id_from_call} ---")
+
+            if assistant_id_from_call:
+                user_id_found = self._get_user_id_from_assistant_id(assistant_id_from_call)
+                print(f"--- DEBUG: Looked up this assistant ID in the database and found user_id: {user_id_found} ---")
+
+                if user_id_found:
+                    print(f"--- DEBUG: User ID found! Now attempting to save the summary to the database... ---")
+                    self._store_call_summary(user_id_found, summary)
+                    logger.info(f"Successfully stored summary for call {call_id} for user {user_id_found}.")
                 else:
-                    logger.error("Could not store summary because user could not be found.")
+                    logger.error(">>> FAILURE: Could not store summary because the assistant ID was not found in our 'assistant' table.")
             else:
-                logger.error("Could not store summary because assistantId was missing in call details.")
+                logger.error(">>> FAILURE: Could not store summary because 'assistantId' was missing from the Vapi call details.")
             
         return {"status": "call_ended", "call_id": call_id}
 
