@@ -586,6 +586,27 @@ class OraniAIAssistant:
         except Exception as e:
             logger.error(f"Error updating transcript: {str(e)}")
             return False
+    def _get_call_details(self, call_id: str) -> Optional[Dict]:
+        """
+        Get detailed call information from Vapi using the call_id.
+        This is necessary to get the final transcript after a call ends.
+        """
+        logger.info(f"Fetching full call details for call_id: {call_id}")
+        try:
+            response = requests.get(
+                f"{self.vapi_base_url}/call/{call_id}",
+                headers=self.vapi_headers
+            )
+            
+            if response.status_code == 200:
+                return response.json()
+            else:
+                logger.error(f"Failed to get call details for {call_id}: {response.status_code} {response.text}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"An exception occurred while getting call details for {call_id}: {str(e)}")
+            return None
 
     def _send_call_notification(self, assistant_id: str, summary: CallSummary) -> bool:
         """Send notification about completed call"""
