@@ -1,11 +1,13 @@
 from fastapi import FastAPI
-from app.api.endpoints import setup, webhooks, calls, summaries
+from app.api.endpoints import setup, webhooks, calls, summaries, notifications
 from app.database import create_db_and_tables 
 import json
 from starlette.requests import Request
+from app.firebase_service import initialize_firebase
 
 def on_startup():
     create_db_and_tables()
+    initialize_firebase()
 
 app = FastAPI(
     title="Orani AI Assistant API",
@@ -16,14 +18,14 @@ app = FastAPI(
 @app.middleware("http")
 async def log_request_body(request: Request, call_next):
     """
-    This middleware intercepts all incoming requests.
-    If the request is a POST to /setup/assistant, it prints the raw body.
+    This middleware intercepts incoming requests and prints the raw body
+    for specific POST endpoints that we want to debug.
     """
-    if request.method == "POST" and request.url.path == "/setup/assistant":
+    if request.method == "POST" and request.url.path in ["/setup/assistant", "/notifications/register-fcm-token"]:
         body_bytes = await request.body()
         
         print("\n" + "="*50)
-        print("🕵️‍ RAW JSON BODY FOR /setup/assistant 🕵️‍")
+        print(f"🕵️‍ RAW JSON BODY FOR {request.url.path} 🕵️‍")
         print("="*50)
         try:
             body_json = json.loads(body_bytes)
@@ -44,6 +46,7 @@ app.include_router(setup.router, prefix="/setup", tags=["Setup"])
 app.include_router(webhooks.router, prefix="/webhook", tags=["Webhooks"])
 app.include_router(calls.router, prefix="/call", tags=["Calls"])
 app.include_router(summaries.router, prefix="/summaries", tags=["Summaries"])
+app.include_router(notifications.router, prefix="/notifications", tags=["Notifications"])
 
 @app.get("/", tags=["Root"])
 def read_root():

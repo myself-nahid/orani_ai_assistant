@@ -5,3 +5,5 @@ python-dotenv
 pydantic_settings
 google-generativeai
 sqlmodel
+sse-starlette
+firebase-admin
