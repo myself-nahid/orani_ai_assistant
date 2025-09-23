@@ -28,23 +28,23 @@ def upsert_assistant(
         logger.error(f"Upsert error: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error during upsert.")
 
-@router.post("/phone")
-def setup_phone(
-    payload: PhoneSetupRequest,
-    orani: OraniAIAssistant = Depends(get_orani_assistant)
-):
-    """
-    Set up and configure a phone number for a user's assistant.
-    """
-    try:
-        phone_setup = orani.setup_phone_number(
-            user_id=payload.user_id,
-            phone_number=payload.phone_number
-        )
-        if phone_setup:
-            return {"status": "success", "phone": phone_setup}
-        else:
-            raise HTTPException(status_code=500, detail="Failed to set up phone")
-    except Exception as e:
-        logger.error(f"Phone setup error: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+# @router.post("/phone")
+# def setup_phone(
+#     payload: PhoneSetupRequest,
+#     orani: OraniAIAssistant = Depends(get_orani_assistant)
+# ):
+#     """
+#     Set up and configure a phone number for a user's assistant.
+#     """
+#     try:
+#         phone_setup = orani.setup_phone_number(
+#             user_id=payload.user_id,
+#             phone_number=payload.phone_number
+#         )
+#         if phone_setup:
+#             return {"status": "success", "phone": phone_setup}
+#         else:
+#             raise HTTPException(status_code=500, detail="Failed to set up phone")
+#     except Exception as e:
+#         logger.error(f"Phone setup error: {str(e)}")
+#         raise HTTPException(status_code=500, detail="Internal server error")
