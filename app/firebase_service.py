@@ -23,6 +23,7 @@ def send_push_notification(token: str, title: str, body: str, data: dict = None)
     )
     try:
         response = messaging.send(message)
+        print(f"\n🔥 SENT Firebase Push Notification: '{title}' to a device.\n")
         logger.info(f"Successfully sent push notification: {response}")
     except Exception as e:
         logger.error(f"Error sending push notification: {e}")

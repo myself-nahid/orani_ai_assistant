@@ -203,20 +203,31 @@ class OraniAIAssistant:
             logger.error(f"Error creating new phone number configuration: {str(e)}")
             return None
 
+    # In app/assistant.py, replace the whole function
+
     def handle_call_webhook(self, webhook_data: Dict) -> Dict:
-        """Handle incoming webhooks from Vapi for call events"""
+        """Handle incoming webhooks from Vapi for call events."""
         
-        event_type = webhook_data.get('message', {}).get('type')
+        message = webhook_data.get('message', {})
+        event_type = message.get('type')
         
-        if event_type == 'call-start':
+        # --- NEW, MORE ROBUST LOGIC ---
+        # We now check for a specific status update to trigger the "start" of the call.
+        if event_type == 'status-update' and message.get('status') == 'in-progress':
+            # This is a reliable indicator that the call has been answered and started.
+            # We will treat this as our "call-start" event.
             return self._handle_call_start(webhook_data)
+        # --------------------------------
+
         elif event_type == 'end-of-call-report':
             return self._handle_call_end(webhook_data)
         elif event_type == 'transcript':
             return self._handle_transcript_update(webhook_data)
         else:
-            logger.info(f"Unhandled webhook event: {event_type}")
-            return {"status": "received"}
+            # We can safely ignore other events like 'speech-update' and 'conversation-update'
+            # by not logging them, or you can keep the log for debugging.
+            # logger.info(f"Ignoring webhook event: {event_type}")
+            return {"status": "received_and_ignored"}
 
     # In app/assistant.py
     # Add this import at the top
@@ -246,7 +257,8 @@ class OraniAIAssistant:
         if user_id:
                 # --- SSE broadcast (already implemented) ---
                 notification_message = json.dumps({ "event": "call_started", "userId": user_id})
-                asyncio.run(broadcaster.broadcast(notification_message))
+                asyncio.create_task(broadcaster.broadcast(notification_message))
+                print(f"\n✅ PUSHED SSE Notification: A call started for user '{user_id}'.\n")
                 
                 # --- Firebase Push Notification Logic ---
                 fcm_token = self._get_fcm_token_for_user(user_id)
