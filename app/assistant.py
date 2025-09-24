@@ -267,7 +267,7 @@ class OraniAIAssistant:
                         token=fcm_token,
                         title="Inbound Call Started",
                         body=f"New call from: {caller_number}",
-                        data={"callId": call_id}
+                        data={"caller_number": caller_number , "type": "incoming_call"}
                     )
                 else:
                     logger.warning(f"No FCM token found for user {user_id}. Cannot send push notification.")
