@@ -33,6 +33,7 @@ class CallDataSchema(BaseModel):
 
 class AssistantDataPayload(BaseModel):
     user_id: str
+    selected_voice_id: Optional[str] = None
     company_info: Optional[CompanyInfoSchema] = None
     price_info: List[PriceInfoSchema] = []
     booking_links: List[BookingLinkSchema] = []

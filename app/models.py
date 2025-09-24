@@ -5,7 +5,7 @@ from datetime import datetime
 class BusinessProfile(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: str = Field(unique=True, index=True)
-    selected_voice_id: Optional[str] = Field(default="ys3XeJJA4ArWMhRpcX1D")
+    selected_voice_id: Optional[str] = Field(default=None)
     fcm_token: Optional[str] = Field(default=None, index=True)
     profile_data: Dict = Field(sa_column=Column(JSON))
 

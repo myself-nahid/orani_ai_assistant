@@ -62,6 +62,7 @@ class OraniAIAssistant:
         print("="*50 + "\n")
         # ------------------------------------
         selected_voice = business_info.get("selected_voice_id", "ys3XeJJA4ArWMhRpcX1D")
+        print(f"\n--- DEBUG: Configuring Vapi assistant with voice ID: {selected_voice} ---\n")
         assistant_config = {
             "name": f"Orani Assistant - {business_info.get('company_info', {}).get('business_name', 'Professional')}",
             "serverUrl": f"https://e177403aa007.ngrok-free.app/webhook/vapi",
@@ -759,75 +760,52 @@ class OraniAIAssistant:
 
     def upsert_assistant_and_profile(self, payload: Dict) -> Optional[Dict]:
         """
-        Saves/updates a user's business profile and then creates/updates the Vapi assistant.
+        [FINAL VERSION]
+        Saves/updates a user's profile, creates the Vapi assistant,
+        and automatically sets up the phone number.
         """
         user_id = payload.get("user_id")
         if not user_id:
             logger.error("Cannot upsert profile: user_id is missing.")
             return None
 
+        # This logic is now the ONLY place where a default voice is determined.
+        voice_id_to_save = payload.get("selected_voice_id", "ys3XeJJA4ArWMhRpcX1D")
+
         with Session(engine) as session:
             statement = select(BusinessProfile).where(BusinessProfile.user_id == user_id)
-            existing_profile = session.exec(statement).first()
-            
-            if existing_profile:
+            profile = session.exec(statement).first()
+
+            if profile:
                 # Update existing profile
-                existing_profile.profile_data = payload
-                session.add(existing_profile)
+                profile.profile_data = payload
+                profile.selected_voice_id = voice_id_to_save
                 logger.info(f"Updated business profile for user_id: {user_id}")
             else:
                 # Create new profile
-                new_profile = BusinessProfile(user_id=user_id, profile_data=payload)
-                session.add(new_profile)
+                profile = BusinessProfile(
+                    user_id=user_id,
+                    profile_data=payload,
+                    selected_voice_id=voice_id_to_save
+                )
                 logger.info(f"Created new business profile for user_id: {user_id}")
             
+            session.add(profile)
             session.commit()
-        assistant_data = self.create_assistant(user_id, payload)
+
+        # --- Call the other functions AFTER saving ---
         
-        return assistant_data
-
-    def upsert_assistant_and_profile(self, payload: Dict) -> Optional[Dict]:
-        """
-        Saves/updates a user's business profile, creates/updates the Vapi assistant,
-        AND automatically sets up the associated phone number.
-        """
-        user_id = payload.get("user_id")
-        if not user_id:
-            logger.error("Cannot upsert profile: user_id is missing.")
-            return None
-
-        # --- Step 1: Save the profile data to our database (no change here) ---
-        with Session(engine) as session:
-            # ... (the existing database logic to save the business profile is perfect)
-            statement = select(BusinessProfile).where(BusinessProfile.user_id == user_id)
-            existing_profile = session.exec(statement).first()
-            if existing_profile:
-                existing_profile.profile_data = payload
-                session.add(existing_profile)
-            else:
-                new_profile = BusinessProfile(user_id=user_id, profile_data=payload)
-                session.add(new_profile)
-            session.commit()
-
-        # --- Step 2: Create the AI assistant with this new data (no change here) ---
+        # 1. Create the assistant using the complete, saved data
         assistant_data = self.create_assistant(user_id, payload)
         if not assistant_data:
             logger.error(f"Failed to create assistant for user {user_id}, stopping process.")
-            return None # Stop if assistant creation fails
+            return None
 
-        # --- Step 3: NEW - Automatically set up the phone number ---
+        # 2. Automatically set up the phone number
         phone_numbers_list = payload.get("phone_numbers", [])
         if phone_numbers_list:
-            # We'll set up the first phone number in the list by default
             phone_to_setup = phone_numbers_list[0].get("phone_number")
             if phone_to_setup:
-                logger.info(f"Profile contains phone number {phone_to_setup}. Proceeding to set it up.")
-                # We can now call our existing setup_phone_number function.
-                # It will use the new assistantId that was just saved to the database.
                 self.setup_phone_number(user_id, phone_to_setup)
-            else:
-                logger.warning(f"User {user_id} has a phone_numbers entry, but the 'phone_number' key is missing.")
-        else:
-            logger.info(f"No phone numbers provided in the profile for user {user_id}. Skipping phone setup.")
         
         return assistant_data
