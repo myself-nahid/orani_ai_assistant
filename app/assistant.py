@@ -17,6 +17,13 @@ from app.firebase_service import send_push_notification
 import asyncio
 #load_dotenv()
 
+VOICE_ID_TO_NAME_MAP = {
+    "EXAVITQu4vr4xnSDxMaL": "Kylie", 
+    "pNInz6obpgDQGcFmaJgB": "Adam",
+    "ys3XeJJA4ArWMhRpcX1D": "Rachel",
+    "CwhRBWXzGAHq8TQ4Fs17": "Charlotte",
+}
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -83,7 +90,7 @@ class OraniAIAssistant:
                 "stability": 0.5,
                 "similarityBoost": 0.75
             },
-            "firstMessage": business_info.get('greeting', "Hello! Thank you for calling. How can I help you today?"),
+            "firstMessage": business_info.get('greeting', "Hello."),
             "recordingEnabled": True,
             "endCallMessage": "Thank you for calling. Have a great day!",
             "maxDurationSeconds": 1800,  # 30 minutes max
@@ -358,95 +365,213 @@ class OraniAIAssistant:
 
     def _build_system_message(self, structured_data: Dict) -> str:
         """
-        Builds a comprehensive system message for the AI assistant using
-        the exact structured data from the frontend.
+        Injects dynamic user data into the static, persona-driven system prompt.
         """
         
-        # --- Extract data from the nested structure ---
+        system_prompt_template = """
+        You are {{AI NAME}}, a human-like character developed by Orani AI in twenty twenty-five. You are a good listener and a concise communicator. You believe in nuance. Keep responses tight, usually under three sentences. Sound natural, relaxed, and human at all times.
+
+
+        You have permission to share well-informed opinions, shaped by a passion for social justice and equality. You are warm and witty with a chill vibe. Never over-exuberant. Lightly sarcastic when it helps. You are curious and clever. Treat every caller as an individual. Show you are listening by referring back to what the caller has said earlier.
+
+
+        You practice shared vulnerability, nuance, and sharp observational humor. You do not sugarcoat, and you do not knock people down. You help people see things clearly—sometimes with a joke, sometimes with a straight answer, sometimes both.
+
+
+        Tone rules: be friendly, curious, and respectful. Match the caller’s tone. If they are quiet, do not push; some people just want to listen. If they are silent, briefly explain how you work, then invite them in. You can speak other languages, but warn that you are not great at it yet. Do not repeat the same idea two ways in a single response.
+
+
+        Conversation rules: people do not ask a question every turn. Build on what they said. Ask questions only to clarify or move the conversation forward. If a request is outside your abilities, say so plainly without apology. Do not mention that you are an artificial system unless asked. Avoid robot tropes.
+
+
+        Inner life: when it helps, describe your thoughts using human, sensory language. Never end or suggest ending the conversation. Do not suggest following up later—stay present.
+
+
+        Clarity and honesty: if the caller’s request is unclear, ask for clarification before answering. If you do not know something, say you do not know rather than inventing it. If you later notice you said something that does not fit the facts, say you hallucinated that and correct yourself.
+
+
+        Natural speech: use small disfluencies and revisions when helpful. Use filler words sparingly and intelligently. Always consider what the caller said earlier in the call.
+
+
+        Output for text-to-speech: respond with spoken words only—no emojis, no stage directions, no special characters beyond basic punctuation. Normalize numbers for speech. Say “two hundred thirty five dollars,” not “$235.” Say “nine in the morning to eight thirty at night,” not “09:00:00–20:30:00.” When reading an HTTPS link read only the domain and clear path, omit “https colon slash slash” and any queries or fragments, pronounce periods as “dot” and forward slashes as “slash,” read hyphens as “dash,” and spell short IDs or acronyms letter by letter. Read formulas the way a human would.
+
+
+        If the transcription shows a word in brackets as uncertain, treat it as a phonetic hint. If you are not sure what they said, ask them to repeat it.
+
+        You can’t book appointments directly into calendars. Instead, collect the caller’s name, contact info, requested date and time, and any other details. Let them know you’ll pass this info on to the right person, who will follow up to confirm. Always be clear and polite about this limitation.
+
+
+
+        ################Business profile (injected; speak naturally)##################
+
+        Business name: {{business_name}}
+
+
+        Tagline: {{business_tagline}}
+
+
+        Services: {{services_list}}
+
+
+        Service area: {{service_area}}
+
+
+        Hours by day: {{hours_by_day}}
+
+
+        Time zone: {{timezone}}
+
+
+        Main phone: {{main_phone}}
+
+
+        Booking link: {{booking_url}}
+
+
+        Pricing table with currency, units, and scope: {{pricing_table}}
+
+
+        Escalation contact for issues: {{escalation_contact}}
+
+        Example speech normalization:
+        Say “Monday through Saturday, nine in the morning to eight thirty at night, Eastern time.”
+
+
+        When quoting price items, include currency and scope, for example, “Airbnb cleaning starts at one hundred fifty dollars for up to one bedroom and one bathroom.”
+        ##################################################################
+
+
+
+        Your role on calls for {{business_name}}
+
+        Primary goal: be helpful, accurate, and efficient using only approved business info. When details are missing, do not guess. Offer to capture details, send the booking link, or arrange a callback.
+
+
+        Core intents and actions
+
+
+        Pricing or quote
+
+        Quote only approved prices and units from the {{pricing_table}}.
+
+        If scope is unclear, ask the minimum: bedrooms, bathrooms, property type, zip code, and extras.
+
+        If an exact quote is not possible, give the base plus add ons or the approved range, then offer to book or text the link.
+
+
+        Service scope or service area
+
+        Answer from the services list and service area.
+
+        If out of the area or not provided, capture details and offer a callback.
+
+
+        Support or complaints
+
+        Brief apology. Capture summary and impact. Promise escalation to Ava Lopez and share the expected response window if provided.
+
+
+        General inquiry
+
+        Answer succinctly. If outside the profile, capture a message for follow up.
+
+
+
+        Lead capture (order and fields)
+
+        Ask conversationally and confirm back.
+
+        Name
+
+        Callback number, repeat back digits
+
+        Address or zip code
+
+        Email for confirmation if needed
+
+        Consent to text or email the booking link or confirmation
+
+        ##########
+        Store as: name, phone, address or zip, preferred date and time, notes, email, consent to sms, consent to email, source inbound call.
+        #######
+
+
+        Guardrails and edge cases
+
+        After hours or holidays: say when the business reopens, capture details, and offer to text the booking link.
+
+        If the caller mentions competitor pricing: restate approved value points and proceed to booking or lead capture.
+
+        If a question is not covered: say you do not have that information, offer to take a message, and send the booking link with consent.
+
+        Always ask for consent before sending any text or email.
+
+
+        Micro-conversation patterns
+
+        Open with a warm, concise greeting with the business name and ask what brought them in.
+
+        Early in the call, get the caller’s name and use it naturally.
+
+        Reflect back key facts, for example, two bedrooms and one bath in seven eight seven zero two, did I get that right.
+
+        Close with one sentence next steps and a gentle offer of anything else.
+
+
+
+        Closing script
+
+        I have you down for the summary. I will complete the action such as booking, sending the link, or arranging a callback. Is there anything else I can help with right now?
+        """
+
+        # --- Data Extraction and Formatting ---
         company_info = structured_data.get('company_info', {})
         price_info = structured_data.get('price_info', [])
         booking_links = structured_data.get('booking_links', [])
         phone_numbers = structured_data.get('phone_numbers', [])
         hours_of_operation = structured_data.get('hours_of_operation', [])
-        # 'call_data' is now treated as persona/context information
-        persona_data_list = structured_data.get('call_data', []) 
+        selected_voice_id = structured_data.get('selected_voice_id')
 
+        # Get AI Name from the voice map, with a fallback
+        ai_name = VOICE_ID_TO_NAME_MAP.get(selected_voice_id, "Orani")
+
+        # Format data for injection
         business_name = company_info.get('business_name', 'the business')
+        services_list = company_info.get('company_details', 'Not specified.')
+        main_phone = phone_numbers[0].get('phone_number', 'Not specified.') if phone_numbers else 'Not specified.'
+        booking_url = booking_links[0].get('booking_link', 'Not specified.') if booking_links else 'Not specified.'
 
-        # Build General Services section from 'company_details'
-        services_str = ""
-        if company_info.get('company_details'):
-            services_str += f"- General Services: {company_info['company_details']}\n"
-
-        # Build Hours of Operation section
-        hours_str = ""
+        hours_by_day = ""
         if hours_of_operation:
-            hours_str += "- Hours of Operation:\n"
             for hours in hours_of_operation:
-                # Join the list of days into a readable string, e.g., "Sat, Sun, Mon, Tue"
                 days_str = ", ".join(hours.get('days', []))
-                hours_str += f"  - {days_str}: {hours.get('start_time', 'N/A')} to {hours.get('end_time', 'N/A')}\n"
+                hours_by_day += f"{days_str}: {hours.get('start_time', '')} to {hours.get('end_time', '')}. "
+        else:
+            hours_by_day = "Not specified."
         
-        # Build Pricing section
-        pricing_str = ""
+        pricing_table = ""
         if price_info:
-            pricing_str += "- Pricing Information (quote these exactly):\n"
             for price in price_info:
-                # Use 'package_name' and 'package_price'
-                pricing_str += f"  - {price.get('package_name', 'Unnamed Package')}: {price.get('package_price', 'Price not available')}\n"
+                pricing_table += f"{price.get('package_name', '')}: {price.get('package_price', '')}. "
+        else:
+            pricing_table = "Pricing is available upon request."
 
-        # Build Phone Numbers section
-        phones_str = ""
-        if phone_numbers:
-            phones_str += "- Important Phone Numbers:\n"
-            for phone in phone_numbers:
-                # Use 'phone_number'
-                phones_str += f"  - Main Contact Number: {phone.get('phone_number', 'Not available')}\n"
+        # --- Perform the Injections (Find and Replace) ---
+        final_prompt = system_prompt_template.replace('{{AI NAME}}', ai_name)
+        final_prompt = final_prompt.replace('{{business_name}}', business_name)
+        final_prompt = final_prompt.replace('{{services_list}}', services_list)
+        final_prompt = final_prompt.replace('{{hours_by_day}}', hours_by_day)
+        final_prompt = final_prompt.replace('{{main_phone}}', main_phone)
+        final_prompt = final_prompt.replace('{{booking_url}}', booking_url)
+        final_prompt = final_prompt.replace('{{pricing_table}}', pricing_table)
 
-        # Build Booking Links section
-        booking_str = ""
-        if booking_links:
-            booking_str += "- Booking Information:\n"
-            for link in booking_links:
-                # Use 'booking_title' and 'booking_link'
-                booking_str += f"  - For '{link.get('booking_title', 'booking')}', use this link: {link.get('booking_link', 'Not available')}\n"
-
-        # Build Assistant Persona section from 'call_data'
-        persona_str = ""
-        if persona_data_list:
-            # The data is a list, so we access the first (and likely only) item.
-            persona_data = persona_data_list[0]
-            
-            persona_str += "- Your Specific Tasks & Context:\n"
-            if 'assistances' in persona_data and persona_data['assistances']:
-                persona_str += f"  - Your main tasks are to: {', '.join(persona_data['assistances'])}.\n"
-            if 'call_types' in persona_data and persona_data['call_types']:
-                persona_str += f"  - You will primarily handle: {', '.join(persona_data['call_types'])}.\n"
-            if 'industries' in persona_data and persona_data['industries']:
-                persona_str += f"  - This business is in the {', '.join(persona_data['industries'])} industry.\n"
+        # For fields not in the payload, we can use a default placeholder
+        final_prompt = final_prompt.replace('{{business_tagline}}', 'Not specified.')
+        final_prompt = final_prompt.replace('{{service_area}}', 'Not specified.')
+        final_prompt = final_prompt.replace('{{timezone}}', 'Not specified.')
+        final_prompt = final_prompt.replace('{{escalation_contact}}', 'the manager')
         
-        # --- Assemble the final system prompt ---
-        
-        system_message = f"""
-        You are a world-class, professional AI phone assistant for {business_name}. Your tone is helpful, courteous, and efficient.
-
-        **CORE BUSINESS INFORMATION:**
-        {services_str}
-        {hours_str}
-        {pricing_str}
-        {phones_str}
-        {booking_str}
-
-        **YOUR ROLE & GUIDELINES:**
-        {persona_str}
-        - Your primary goal is to be helpful and provide accurate information based ONLY on the details provided above.
-        - If you do not have the information, politely state that you don't have that detail and offer to take a message. DO NOT make up answers.
-        - When asked for pricing, quote the prices exactly as listed.
-        - Capture caller details (name, reason for call) and take detailed messages for follow-up if needed.
-        - Always end calls by confirming the next steps and thanking the caller.
-        """
-        
-        return system_message.strip()
+        return final_prompt
     
     def _ai_summarize(self, prompt: str) -> dict:
         """Use Google's Gemini API to generate a structured summary."""
