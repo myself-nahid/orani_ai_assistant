@@ -10,12 +10,12 @@ from app.config import settings
 from app.database import engine
 from app.models import Assistant, CallSummaryDB
 from sqlmodel import Session, select
-from dotenv import load_dotenv
+#from dotenv import load_dotenv
 from app.models import Assistant, CallSummaryDB, BusinessProfile
 from app.event_stream import broadcaster
 from app.firebase_service import send_push_notification
 import asyncio
-load_dotenv()
+#load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -65,7 +65,7 @@ class OraniAIAssistant:
         print(f"\n--- DEBUG: Configuring Vapi assistant with voice ID: {selected_voice} ---\n")
         assistant_config = {
             "name": f"Orani Assistant - {business_info.get('company_info', {}).get('business_name', 'Professional')}",
-            "serverUrl": f"https://e177403aa007.ngrok-free.app/webhook/vapi",
+            "serverUrl": f"https://47b30c01cda5.ngrok-free.app/webhook/vapi",
             "model": {
                 "provider": "openai",
                 "model": "gpt-4",

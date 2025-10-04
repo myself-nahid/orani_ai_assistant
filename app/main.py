@@ -1,4 +1,6 @@
 from fastapi import FastAPI
+from dotenv import load_dotenv 
+load_dotenv()
 from app.api.endpoints import setup, webhooks, calls, summaries, notifications
 from app.database import create_db_and_tables 
 import json
