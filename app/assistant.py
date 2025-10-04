@@ -17,11 +17,17 @@ from app.firebase_service import send_push_notification
 import asyncio
 #load_dotenv()
 
-VOICE_ID_TO_NAME_MAP = {
-    "EXAVITQu4vr4xnSDxMaL": "Kylie", 
-    "pNInz6obpgDQGcFmaJgB": "Adam",
-    "ys3XeJJA4ArWMhRpcX1D": "Rachel",
-    "CwhRBWXzGAHq8TQ4Fs17": "Charlotte",
+# VOICE_ID_TO_NAME_MAP = {
+#     "EXAVITQu4vr4xnSDxMaL": "Kylie", 
+#     "pNInz6obpgDQGcFmaJgB": "Adam",
+#     "ys3XeJJA4ArWMhRpcX1D": "Rachel",
+#     "CwhRBWXzGAHq8TQ4Fs17": "Charlotte",
+# }
+VAPI_VOICE_MAP = {
+    "cole": "Cole",
+    "rohan": "Rohan",
+    "hana": "Hana",
+    "kylie": "Kylie",
 }
 
 logging.basicConfig(level=logging.INFO)
@@ -58,7 +64,7 @@ class OraniAIAssistant:
         }
 
     def create_assistant(self, user_id: str, business_info: Dict) -> Dict:
-        """Create a Vapi assistant with custom business knowledge"""
+        """Creates a Vapi assistant using the provided business info and saved preferences."""
         
         system_message = self._build_system_message(business_info)
         # --- ADD THIS BLOCK FOR DEBUGGING ---
@@ -68,7 +74,8 @@ class OraniAIAssistant:
         print(system_message)
         print("="*50 + "\n")
         # ------------------------------------
-        selected_voice = business_info.get("selected_voice_id", "ys3XeJJA4ArWMhRpcX1D")
+        db_profile = self._get_business_profile(user_id)
+        selected_voice = db_profile.selected_voice_id if db_profile else "kylie"
         print(f"\n--- DEBUG: Configuring Vapi assistant with voice ID: {selected_voice} ---\n")
         assistant_config = {
             "name": f"Orani Assistant - {business_info.get('company_info', {}).get('business_name', 'Professional')}",
@@ -84,11 +91,8 @@ class OraniAIAssistant:
                 ]
             },
             "voice": {
-                "provider": "11labs",
-                "voiceId": selected_voice,  
-                "speed": 1.0,
-                "stability": 0.5,
-                "similarityBoost": 0.75
+                "provider": "vapi",
+                "voiceId": selected_voice
             },
             "firstMessage": business_info.get('greeting', "Hello."),
             "recordingEnabled": True,
@@ -532,8 +536,18 @@ class OraniAIAssistant:
         hours_of_operation = structured_data.get('hours_of_operation', [])
         selected_voice_id = structured_data.get('selected_voice_id')
 
+        # --- Data Extraction and Formatting ---
+        user_id = structured_data.get("user_id")
+        
+        # --- GET AI NAME FROM DATABASE ---
+        ai_name = "Orani" # Default
+        db_profile = self._get_business_profile(user_id) # Use your existing helper function
+        if db_profile and db_profile.ai_name:
+            ai_name = db_profile.ai_name
+    # -------------------------------
+
         # Get AI Name from the voice map, with a fallback
-        ai_name = VOICE_ID_TO_NAME_MAP.get(selected_voice_id, "Orani")
+        ai_name = VAPI_VOICE_MAP.get(selected_voice_id, "Orani")
 
         # Format data for injection
         business_name = company_info.get('business_name', 'the business')
@@ -885,9 +899,8 @@ class OraniAIAssistant:
 
     def upsert_assistant_and_profile(self, payload: Dict) -> Optional[Dict]:
         """
-        [FINAL VERSION]
-        Saves/updates a user's profile, creates the Vapi assistant,
-        and automatically sets up the phone number.
+        Saves/updates a user's profile, including voice and AI name,
+    and then creates/updates the Vapi assistant.
         """
         user_id = payload.get("user_id")
         if not user_id:
@@ -896,7 +909,7 @@ class OraniAIAssistant:
 
         # This logic is now the ONLY place where a default voice is determined.
         voice_id_to_save = payload.get("selected_voice_id", "ys3XeJJA4ArWMhRpcX1D")
-
+        ai_name_to_save = payload.get("ai_name") or VAPI_VOICE_MAP.get(voice_id_to_save, "Orani")
         with Session(engine) as session:
             statement = select(BusinessProfile).where(BusinessProfile.user_id == user_id)
             profile = session.exec(statement).first()
@@ -905,13 +918,15 @@ class OraniAIAssistant:
                 # Update existing profile
                 profile.profile_data = payload
                 profile.selected_voice_id = voice_id_to_save
+                profile.ai_name = ai_name_to_save
                 logger.info(f"Updated business profile for user_id: {user_id}")
             else:
                 # Create new profile
                 profile = BusinessProfile(
                     user_id=user_id,
                     profile_data=payload,
-                    selected_voice_id=voice_id_to_save
+                    selected_voice_id=voice_id_to_save,
+                    ai_name=ai_name_to_save
                 )
                 logger.info(f"Created new business profile for user_id: {user_id}")
             
@@ -934,3 +949,17 @@ class OraniAIAssistant:
                 self.setup_phone_number(user_id, phone_to_setup)
         
         return assistant_data
+    
+    def _get_business_profile(self, user_id: str) -> Optional[BusinessProfile]:
+        """
+        Gets the full business profile object for a user from our local database.
+        """
+
+        with Session(engine) as session:
+            statement = select(BusinessProfile).where(BusinessProfile.user_id == user_id)
+            profile = session.exec(statement).first()
+            if profile:
+                logger.info(f"Found existing business profile for user_id: {user_id}")
+            else:
+                logger.info(f"No existing business profile found for user_id: {user_id}. A new one will be created.")
+            return profile
