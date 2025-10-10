@@ -79,7 +79,7 @@ class OraniAIAssistant:
         print(f"\n--- DEBUG: Configuring Vapi assistant with voice ID: {selected_voice} ---\n")
         assistant_config = {
             "name": f"Orani Assistant - {business_info.get('company_info', {}).get('business_name', 'Professional')}",
-            "serverUrl": f"https://47b30c01cda5.ngrok-free.app/webhook/vapi",
+            "serverUrl": f"https://41d246fd8560.ngrok-free.app/webhook/vapi",
             "model": {
                 "provider": "openai",
                 "model": "gpt-4",
@@ -305,7 +305,7 @@ class OraniAIAssistant:
                 duration = int((end_time - start_time).total_seconds())
 
             summary_prompt = f"""
-            Analyze the following phone call transcript and provide a structured summary in JSON format.
+            Analyze the following phone call transcript. Your task is to extract all key takeaways, action items, and follow-up tasks.
 
             **Transcript:**
             ---
@@ -313,29 +313,48 @@ class OraniAIAssistant:
             ---
 
             **Instructions:**
-            Based on the transcript, extract the following information and format it as a JSON object with these exact keys: "caller_intent", "summary", "action_items", and "outcome".
+            1.  DO NOT write a paragraph-style summary.
+            2.  Present all information as a list of concise, scannable, and actionable bullet points.
+            3.  Each bullet point should be a complete, clear instruction or a key fact for the business owner. Start action items with "ACTION:".
+            4.  Format the entire output as a single JSON object with one key: `"bullet_points"`. The value of this key should be a list of strings.
 
-            - "caller_intent": A short, one-sentence description of why the caller was calling.
-            - "summary": A concise paragraph summarizing the conversation.
-            - "action_items": A list of clear, actionable to-do items for the business owner. If no actions are needed, provide an empty list [].
-            - "outcome": The result of the call (e.g., "Message taken," "Appointment scheduled," "Question answered").
+            **JSON Output Example:**
+            {{
+            "bullet_points": [
+                "Caller's name is Alex.",
+                "ACTION: Call Alex back at 555-123-4567 to schedule the appointment.",
+                "Requested appointment time is for this Friday afternoon.",
+                "Inquired about the 'Standard Deck Package' pricing."
+            ]
+            }}
 
-            Provide only the raw JSON object as the output.
+            **Provide only the raw JSON object as the output.**
             """
 
             summary_data = self._ai_summarize(summary_prompt)
-            
+            bullet_points = summary_data.get("bullet_points", ["AI summary failed to generate."])
+
             summary = CallSummary(
-                call_id=call_id,
-                caller_phone=caller_number,
-                duration=duration,
-                transcript=transcript,
-                summary=summary_data.get("summary", "Summary not available."),
-                key_points=summary_data.get("action_items", []),
-                outcome=summary_data.get("outcome", "Outcome not determined."),
-                caller_intent=summary_data.get("caller_intent", "Intent not determined."),
-                timestamp=datetime.now()
+            call_id=call_id,
+            caller_phone=caller_number,
+            duration=duration,
+            transcript=transcript,
+            summary="\n".join(f"- {item}" for item in bullet_points),
+            key_points=bullet_points,
+            outcome=summary_data.get("outcome", "Outcome not determined."), 
+            caller_intent=summary_data.get("caller_intent", "Intent not determined."),
+            timestamp=datetime.now()
             )
+
+            print("\n" + "="*50)
+            print("🎉 COMPLETE CALL SUMMARY (BULLET-POINT FORMAT) 🎉")
+            print("="*50)
+            print(f"Call ID: {summary.call_id}")
+            print(f"Caller Phone: {summary.caller_phone}")
+            print("\n--- Action Items & Follow-up Tasks ---")
+            for item in summary.key_points:
+                print(f"- {item}")
+            print("\n" + "="*50 + "\n")
 
             assistant_id_from_call = call_details.get('assistantId')
             print(f"\n--- DEBUG: Assistant ID from the live call is: {assistant_id_from_call} ---")
