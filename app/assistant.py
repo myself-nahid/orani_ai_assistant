@@ -8,10 +8,9 @@ from dataclasses import dataclass
 import google.generativeai as genai
 from app.config import settings
 from app.database import engine
-from app.models import Assistant, CallSummaryDB
+from app.models import Assistant, CallSummaryDB, PhoneNumber, BusinessProfile
 from sqlmodel import Session, select
 #from dotenv import load_dotenv
-from app.models import Assistant, CallSummaryDB, BusinessProfile
 from app.event_stream import broadcaster
 from app.firebase_service import send_push_notification
 import asyncio
@@ -712,22 +711,34 @@ class OraniAIAssistant:
             return None
 
     def _store_phone_number(self, user_id: str, phone_number: str, vapi_phone_id: str) -> bool:
-        """Store phone number configuration in Django backend"""
-        try:
-            response = requests.post(
-                f"{self.backend_api_url}/api/users/{user_id}/phone/",
-                headers=self.backend_headers,
-                json={
-                    "phone_number": phone_number,
-                    "vapi_phone_id": vapi_phone_id
-                }
-            )
+        """
+        [CORRECTED VERSION]
+        Saves or updates a phone number in our local database.
+        """
+        logger.info(f"Storing phone number {phone_number} for user {user_id} in local DB.")
+        with Session(engine) as session:
+            # Check if this phone number already exists in our database
+            statement = select(PhoneNumber).where(PhoneNumber.phone_number == phone_number)
+            existing_number = session.exec(statement).first()
+
+            if existing_number:
+                # If it exists, update its details
+                existing_number.user_id = user_id
+                existing_number.vapi_phone_id = vapi_phone_id
+                session.add(existing_number)
+                logger.info("Updated existing phone number record.")
+            else:
+                # If it's new, create a new record
+                new_number = PhoneNumber(
+                    user_id=user_id,
+                    phone_number=phone_number,
+                    vapi_phone_id=vapi_phone_id
+                )
+                session.add(new_number)
+                logger.info("Created new phone number record.")
             
-            return response.status_code == 201
-            
-        except Exception as e:
-            logger.error(f"Error storing phone number: {str(e)}")
-            return False
+            session.commit()
+        return True
 
     def _create_call_log(self, call_data: Dict) -> bool:
         """Create call log entry in Django backend"""
@@ -925,7 +936,7 @@ class OraniAIAssistant:
         if not user_id:
             logger.error("Cannot upsert profile: user_id is missing.")
             return None
-
+        ring_count_to_save = payload.get("ring_count", 4)
         # This logic is now the ONLY place where a default voice is determined.
         voice_id_to_save = payload.get("selected_voice_id", "ys3XeJJA4ArWMhRpcX1D")
         ai_name_to_save = payload.get("ai_name") or VAPI_VOICE_MAP.get(voice_id_to_save, "Orani")
@@ -936,6 +947,7 @@ class OraniAIAssistant:
             if profile:
                 # Update existing profile
                 profile.profile_data = payload
+                profile.ring_count = ring_count_to_save
                 profile.selected_voice_id = voice_id_to_save
                 profile.ai_name = ai_name_to_save
                 logger.info(f"Updated business profile for user_id: {user_id}")
@@ -944,6 +956,7 @@ class OraniAIAssistant:
                 profile = BusinessProfile(
                     user_id=user_id,
                     profile_data=payload,
+                    ring_count=ring_count_to_save,
                     selected_voice_id=voice_id_to_save,
                     ai_name=ai_name_to_save
                 )
@@ -982,3 +995,19 @@ class OraniAIAssistant:
             else:
                 logger.info(f"No existing business profile found for user_id: {user_id}. A new one will be created.")
             return profile
+
+    def _get_user_id_from_phone_number(self, phone_number_string: str) -> Optional[str]:
+        """
+        Finds which user owns a given phone number by checking our local database.
+        """
+        logger.info(f"Looking up user for phone number: {phone_number_string}")
+        with Session(engine) as session:
+            statement = select(PhoneNumber).where(PhoneNumber.phone_number == phone_number_string)
+            phone_record = session.exec(statement).first()
+            
+            if phone_record:
+                logger.info(f"Found user '{phone_record.user_id}' for phone number {phone_number_string}")
+                return phone_record.user_id
+            else:
+                logger.error(f"Could not find a user for phone number: {phone_number_string}")
+                return None

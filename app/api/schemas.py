@@ -33,6 +33,7 @@ class CallDataSchema(BaseModel):
 
 class AssistantDataPayload(BaseModel):
     user_id: str
+    ring_count: Optional[int] = 4
     selected_voice_id: str 
     ai_name: Optional[str] = None
     company_info: Optional[CompanyInfoSchema] = None

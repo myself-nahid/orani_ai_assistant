@@ -9,6 +9,7 @@ class BusinessProfile(SQLModel, table=True):
     ai_name: Optional[str] = Field(default="Orani")
     fcm_token: Optional[str] = Field(default=None, index=True)
     profile_data: Dict = Field(sa_column=Column(JSON))
+    ring_count: Optional[int] = Field(default=4)
 
 class Assistant(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -27,3 +28,10 @@ class CallSummaryDB(SQLModel, table=True):
     outcome: str
     caller_intent: str
     timestamp: datetime
+
+class PhoneNumber(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: str = Field(index=True)
+    phone_number: str = Field(unique=True, index=True) # The number string, e.g., +1888...
+    vapi_phone_id: str # The ID from Vapi, e.g., phone_... or a UUID
+    is_active: bool = Field(default=False) # Is this the number currently linked to the assistant?

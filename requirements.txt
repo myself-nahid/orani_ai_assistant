@@ -7,3 +7,4 @@ google-generativeai
 sqlmodel
 sse-starlette
 firebase-admin
+python-multipart
