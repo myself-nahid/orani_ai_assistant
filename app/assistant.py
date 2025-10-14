@@ -254,36 +254,23 @@ class OraniAIAssistant:
             return None
 
     def _handle_call_start(self, webhook_data: Dict) -> Dict:
-        """Handle call start event and broadcast it."""
+        """Handle call start event and broadcast for IN-APP listeners (SSE)."""
         call_data = webhook_data.get('message', {}).get('call', {})
-        call_id = call_data.get('id')
-        caller_number = call_data.get('customer', {}).get('number')
-        
-        # --- THIS IS THE FIX ---
-        # Get the assistantId from the webhook data
         assistant_id = call_data.get('assistantId')
-        # -----------------------
 
         user_id = self._get_user_id_from_assistant_id(assistant_id)
         if user_id:
-                # --- SSE broadcast (already implemented) ---
-                notification_message = json.dumps({ "event": "call_started", "userId": user_id})
-                asyncio.create_task(broadcaster.broadcast(notification_message))
-                print(f"\n✅ PUSHED SSE Notification: A call started for user '{user_id}'.\n")
-                
-                # --- Firebase Push Notification Logic ---
-                fcm_token = self._get_fcm_token_for_user(user_id)
-                if fcm_token:
-                    send_push_notification(
-                        token=fcm_token,
-                        title="Inbound Call Started",
-                        body=f"New call from: {caller_number}",
-                        data={"caller_number": caller_number , "type": "incoming_call"}
-                    )
-                else:
-                    logger.warning(f"No FCM token found for user {user_id}. Cannot send push notification.")
+            # ONLY do the SSE broadcast here for the live, in-app pop-up.
+            notification_message = json.dumps({
+                "event": "ai_call_started", # We can make this event more specific
+                "userId": user_id,
+                "callId": call_data.get('id'),
+                "callerNumber": call_data.get('customer', {}).get('number')
+            })
+            asyncio.create_task(broadcaster.broadcast(notification_message))
+            print(f"\n✅ PUSHED SSE Notification: AI has taken over call for user '{user_id}'.\n")
             
-        return {"status": "call_started", "call_id": call_id}
+        return {"status": "call_started"}
 
     def _handle_call_end(self, webhook_data: Dict) -> Dict:
         """Handle call end event, generate summary, and SAVE it to the database."""

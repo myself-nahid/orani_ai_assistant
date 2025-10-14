@@ -8,3 +8,4 @@ sqlmodel
 sse-starlette
 firebase-admin
 python-multipart
+twilio

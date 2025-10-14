@@ -9,6 +9,9 @@ class Settings(BaseSettings):
     TWILIO_AUTH_TOKEN: str
     GOOGLE_API_KEY: str
     BACKEND_API_BASE_URL: str
+    TWILIO_API_KEY_SID: str
+    TWILIO_API_KEY_SECRET: str
+    TWIML_APP_SID: str
 
     model_config = SettingsConfigDict(env_file=".env", extra='ignore')
 
