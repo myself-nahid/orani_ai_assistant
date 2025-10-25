@@ -78,7 +78,7 @@ class OraniAIAssistant:
         print(f"\n--- DEBUG: Configuring Vapi assistant with voice ID: {selected_voice} ---\n")
         assistant_config = {
             "name": f"Orani Assistant - {business_info.get('company_info', {}).get('business_name', 'Professional')}",
-            "serverUrl": f"https://41d246fd8560.ngrok-free.app/webhook/vapi",
+            "serverUrl": f"https://c218bed08781.ngrok-free.app/webhook/vapi",
             "model": {
                 "provider": "openai",
                 "model": "gpt-4",
@@ -343,22 +343,20 @@ class OraniAIAssistant:
             print("\n" + "="*50 + "\n")
 
             assistant_id_from_call = call_details.get('assistantId')
-            print(f"\n--- DEBUG: Assistant ID from the live call is: {assistant_id_from_call} ---")
+        print(f"\n--- DEBUG: Assistant ID from the Vapi call report is: {assistant_id_from_call} ---")
 
-            if assistant_id_from_call:
-                user_id_found = self._get_user_id_from_assistant_id(assistant_id_from_call)
-                print(f"--- DEBUG: Looked up this assistant ID in the database and found user_id: {user_id_found} ---")
+        if assistant_id_from_call:
+            user_id_found = self._get_user_id_from_assistant_id(assistant_id_from_call)
+            print(f"--- DEBUG: Looked up this assistant ID in the DB. User found: {user_id_found} ---")
 
-                if user_id_found:
-                    print(f"--- DEBUG: User ID found! Now attempting to save the summary to the database... ---")
-                    self._store_call_summary(user_id_found, summary)
-                    logger.info(f"Successfully stored summary for call {call_id} for user {user_id_found}.")
-                else:
-                    logger.error(">>> FAILURE: Could not store summary because the assistant ID was not found in our 'assistant' table.")
+            if user_id_found:
+                print(f"--- DEBUG: User ID found! Saving summary to database... ---")
+                self._store_call_summary(user_id_found, summary)
+                logger.info(f"Successfully stored summary for call {call_id} for user {user_id_found}.")
             else:
-                logger.error(">>> FAILURE: Could not store summary because 'assistantId' was missing from the Vapi call details.")
-            
-        return {"status": "call_ended", "call_id": call_id}
+                logger.error(">>> FAILURE: The assistant ID from the call does not match any assistant in our database. Summary not saved.")
+        else:
+            logger.error(">>> FAILURE: 'assistantId' was missing from the Vapi call details. Summary not saved.")
 
     def _handle_transcript_update(self, webhook_data: Dict) -> Dict:
         """Handle real-time transcript updates"""
@@ -916,55 +914,55 @@ class OraniAIAssistant:
 
     def upsert_assistant_and_profile(self, payload: Dict) -> Optional[Dict]:
         """
-        Saves/updates a user's profile, including voice and AI name,
-    and then creates/updates the Vapi assistant.
+        [FINAL VERSION]
+        Saves/updates profile, creates assistant, and robustly sets up the phone number.
         """
         user_id = payload.get("user_id")
         if not user_id:
             logger.error("Cannot upsert profile: user_id is missing.")
             return None
+
+        # This logic is correct and handles defaults.
+        voice_id_to_save = payload.get("selected_voice_id") or "ys3XeJJA4ArWMhRpcX1D"
         ring_count_to_save = payload.get("ring_count", 4)
-        # This logic is now the ONLY place where a default voice is determined.
-        voice_id_to_save = payload.get("selected_voice_id", "ys3XeJJA4ArWMhRpcX1D")
-        ai_name_to_save = payload.get("ai_name") or VAPI_VOICE_MAP.get(voice_id_to_save, "Orani")
+        forwarding_number_to_save = payload.get("forwarding_number") # Keeping this for future use
+
         with Session(engine) as session:
+            # ... (the database saving logic is correct)
             statement = select(BusinessProfile).where(BusinessProfile.user_id == user_id)
             profile = session.exec(statement).first()
-
             if profile:
-                # Update existing profile
                 profile.profile_data = payload
-                profile.ring_count = ring_count_to_save
                 profile.selected_voice_id = voice_id_to_save
-                profile.ai_name = ai_name_to_save
-                logger.info(f"Updated business profile for user_id: {user_id}")
+                profile.ring_count = ring_count_to_save
+                profile.forwarding_number = forwarding_number_to_save
             else:
-                # Create new profile
                 profile = BusinessProfile(
                     user_id=user_id,
                     profile_data=payload,
-                    ring_count=ring_count_to_save,
                     selected_voice_id=voice_id_to_save,
-                    ai_name=ai_name_to_save
+                    ring_count=ring_count_to_save,
+                    forwarding_number=forwarding_number_to_save
                 )
-                logger.info(f"Created new business profile for user_id: {user_id}")
-            
             session.add(profile)
             session.commit()
 
         # --- Call the other functions AFTER saving ---
         
-        # 1. Create the assistant using the complete, saved data
+        # 1. Create the new assistant.
         assistant_data = self.create_assistant(user_id, payload)
         if not assistant_data:
             logger.error(f"Failed to create assistant for user {user_id}, stopping process.")
             return None
 
-        # 2. Automatically set up the phone number
+        # 2. Automatically set up the phone number.
+        #    This is the crucial resynchronization step.
         phone_numbers_list = payload.get("phone_numbers", [])
         if phone_numbers_list:
             phone_to_setup = phone_numbers_list[0].get("phone_number")
             if phone_to_setup:
+                # By calling this, we force the phone number in Vapi to be
+                # linked to the brand new assistant we just created.
                 self.setup_phone_number(user_id, phone_to_setup)
         
         return assistant_data
