@@ -10,6 +10,7 @@ class BusinessProfile(SQLModel, table=True):
     fcm_token: Optional[str] = Field(default=None, index=True)
     profile_data: Dict = Field(sa_column=Column(JSON))
     ring_count: Optional[int] = Field(default=4)
+    recording_enabled: bool = Field(default=False)
 
 class Assistant(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -28,6 +29,7 @@ class CallSummaryDB(SQLModel, table=True):
     outcome: str
     caller_intent: str
     timestamp: datetime
+    recording_url: Optional[str] = Field(default=None)
 
 class PhoneNumber(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)

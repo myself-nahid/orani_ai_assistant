@@ -42,6 +42,7 @@ class AssistantDataPayload(BaseModel):
     phone_numbers: List[PhoneNumberSchema] = []
     hours_of_operation: List[HoursOfOperationSchema] = []
     call_data: List[CallDataSchema] = []
+    recording_enabled: bool = False
 
 class PhoneSetupRequest(BaseModel):
     user_id: str = Field(..., description="The unique identifier for the user.")
@@ -67,6 +68,7 @@ class CallSummaryResponse(BaseModel):
     outcome: str
     caller_intent: str
     timestamp: datetime
+    recording_url: Optional[str] = None
 
     model_config = {
         "from_attributes": True,

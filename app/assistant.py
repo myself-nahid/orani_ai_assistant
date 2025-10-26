@@ -14,6 +14,8 @@ from sqlmodel import Session, select
 from app.event_stream import broadcaster
 from app.firebase_service import send_push_notification
 import asyncio
+import cloudinary
+import cloudinary.uploader
 #load_dotenv()
 
 # VOICE_ID_TO_NAME_MAP = {
@@ -76,6 +78,8 @@ class OraniAIAssistant:
         db_profile = self._get_business_profile(user_id)
         selected_voice = db_profile.selected_voice_id if db_profile else "kylie"
         print(f"\n--- DEBUG: Configuring Vapi assistant with voice ID: {selected_voice} ---\n")
+        should_record = db_profile.recording_enabled if db_profile else False
+        print(f"\n--- DEBUG: Configuring Vapi assistant with recording enabled: {should_record} ---\n")
         assistant_config = {
             "name": f"Orani Assistant - {business_info.get('company_info', {}).get('business_name', 'Professional')}",
             "serverUrl": f"https://c218bed08781.ngrok-free.app/webhook/vapi",
@@ -94,7 +98,7 @@ class OraniAIAssistant:
                 "voiceId": selected_voice
             },
             "firstMessage": business_info.get('greeting', "Hello."),
-            "recordingEnabled": True,
+            "recordingEnabled": should_record,
             "endCallMessage": "Thank you for calling. Have a great day!",
             "maxDurationSeconds": 1800,  # 30 minutes max
             "transcriber": {
@@ -289,6 +293,12 @@ class OraniAIAssistant:
                 end_time = datetime.fromisoformat(ended_at_str.replace("Z", "+00:00"))
                 start_time = datetime.fromisoformat(started_at_str.replace("Z", "+00:00"))
                 duration = int((end_time - start_time).total_seconds())
+            recording_url = None
+            vapi_rec_url = call_details.get("recordingUrl")
+            if vapi_rec_url:
+                # If a recording exists, upload it and get the permanent URL
+                recording_url = self._upload_recording_to_cloudinary(vapi_rec_url, call_id)
+                print(f"\n--- DEBUG: Uploaded recording URL: {recording_url} ---\n")
 
             summary_prompt = f"""
             Analyze the following phone call transcript. Your task is to extract all key takeaways, action items, and follow-up tasks.
@@ -351,7 +361,7 @@ class OraniAIAssistant:
 
             if user_id_found:
                 print(f"--- DEBUG: User ID found! Saving summary to database... ---")
-                self._store_call_summary(user_id_found, summary)
+                self._store_call_summary(user_id_found, summary, recording_url)
                 logger.info(f"Successfully stored summary for call {call_id} for user {user_id_found}.")
             else:
                 logger.error(">>> FAILURE: The assistant ID from the call does not match any assistant in our database. Summary not saved.")
@@ -531,32 +541,26 @@ class OraniAIAssistant:
         I have you down for the summary. I will complete the action such as booking, sending the link, or arranging a callback. Is there anything else I can help with right now?
         """
 
-        # --- Data Extraction and Formatting ---
-        company_info = structured_data.get('company_info', {})
-        price_info = structured_data.get('price_info', [])
-        booking_links = structured_data.get('booking_links', [])
-        phone_numbers = structured_data.get('phone_numbers', [])
-        hours_of_operation = structured_data.get('hours_of_operation', [])
-        selected_voice_id = structured_data.get('selected_voice_id')
-
-        # --- Data Extraction and Formatting ---
+        # --- Data Extraction and Formatting (ROBUST VERSION) ---
         user_id = structured_data.get("user_id")
-        
-        # --- GET AI NAME FROM DATABASE ---
+        company_info = structured_data.get('company_info', {}) or {}
+        price_info = structured_data.get('price_info', []) or []
+        booking_links = structured_data.get('booking_links', []) or []
+        phone_numbers = structured_data.get('phone_numbers', []) or []
+        hours_of_operation = structured_data.get('hours_of_operation', []) or []
+
+        # Get AI Name from the database, which is the single source of truth
         ai_name = "Orani" # Default
-        db_profile = self._get_business_profile(user_id) # Use your existing helper function
-        if db_profile and db_profile.ai_name:
-            ai_name = db_profile.ai_name
-    # -------------------------------
-
-        # Get AI Name from the voice map, with a fallback
-        ai_name = VAPI_VOICE_MAP.get(selected_voice_id, "Orani")
-
-        # Format data for injection
-        business_name = company_info.get('business_name', 'the business')
-        services_list = company_info.get('company_details', 'Not specified.')
-        main_phone = phone_numbers[0].get('phone_number', 'Not specified.') if phone_numbers else 'Not specified.'
-        booking_url = booking_links[0].get('booking_link', 'Not specified.') if booking_links else 'Not specified.'
+        if user_id:
+            db_profile = self._get_business_profile(user_id)
+            if db_profile and db_profile.ai_name:
+                ai_name = db_profile.ai_name
+        
+        # Format data for injection, ensuring no 'None' values are used
+        business_name = company_info.get('business_name') or 'the business'
+        services_list = company_info.get('company_details') or 'Not specified.'
+        main_phone = phone_numbers[0].get('phone_number') if phone_numbers else 'Not specified.'
+        booking_url = booking_links[0].get('booking_link') if booking_links else 'Not specified.'
 
         hours_by_day = ""
         if hours_of_operation:
@@ -740,7 +744,7 @@ class OraniAIAssistant:
             logger.error(f"Error creating call log: {str(e)}")
             return False
 
-    def _store_call_summary(self, user_id: str, summary: CallSummary) -> bool:
+    def _store_call_summary(self, user_id: str, summary: CallSummary, recording_url: Optional[str] = None) -> bool:
         """Stores the call summary into our local database."""
         summary_to_db = CallSummaryDB(
             user_id=user_id,
@@ -752,6 +756,7 @@ class OraniAIAssistant:
             key_points=summary.key_points,
             outcome=summary.outcome,
             caller_intent=summary.caller_intent,
+            recording_url=recording_url,
             timestamp=summary.timestamp
         )
         with Session(engine) as session:
@@ -925,7 +930,8 @@ class OraniAIAssistant:
         # This logic is correct and handles defaults.
         voice_id_to_save = payload.get("selected_voice_id") or "ys3XeJJA4ArWMhRpcX1D"
         ring_count_to_save = payload.get("ring_count", 4)
-        forwarding_number_to_save = payload.get("forwarding_number") # Keeping this for future use
+        recording_enabled_to_save = payload.get("recording_enabled", False)
+        # forwarding_number_to_save = payload.get("forwarding_number") # Keeping this for future use
 
         with Session(engine) as session:
             # ... (the database saving logic is correct)
@@ -935,14 +941,16 @@ class OraniAIAssistant:
                 profile.profile_data = payload
                 profile.selected_voice_id = voice_id_to_save
                 profile.ring_count = ring_count_to_save
-                profile.forwarding_number = forwarding_number_to_save
+                profile.recording_enabled = recording_enabled_to_save
+                # profile.forwarding_number = forwarding_number_to_save
             else:
                 profile = BusinessProfile(
                     user_id=user_id,
                     profile_data=payload,
                     selected_voice_id=voice_id_to_save,
                     ring_count=ring_count_to_save,
-                    forwarding_number=forwarding_number_to_save
+                    recording_enabled=recording_enabled_to_save,
+                    #forwarding_number=forwarding_number_to_save
                 )
             session.add(profile)
             session.commit()
@@ -996,3 +1004,37 @@ class OraniAIAssistant:
             else:
                 logger.error(f"Could not find a user for phone number: {phone_number_string}")
                 return None
+            
+    # In assistant.py, add this new function to the class
+    def _upload_recording_to_cloudinary(self, vapi_recording_url: str, call_id: str) -> Optional[str]:
+        """Downloads a recording from Vapi and uploads it to Cloudinary."""
+        logger.info(f"Uploading recording for call {call_id} to Cloudinary.")
+        try:
+            # Configure Cloudinary
+            cloudinary.config(
+                cloud_name=settings.CLOUDINARY_CLOUD_NAME,
+                api_key=settings.CLOUDINARY_API_KEY,
+                api_secret=settings.CLOUDINARY_API_SECRET,
+                secure=True
+            )
+
+            # Upload the file directly from the URL.
+            # We set a public_id to easily find it later, and save it in a folder.
+            upload_result = cloudinary.uploader.upload(
+                vapi_recording_url,
+                resource_type="video", # Cloudinary treats audio as video
+                folder=f"call_recordings/{datetime.now().strftime('%Y-%m')}",
+                public_id=call_id
+            )
+
+            secure_url = upload_result.get("secure_url")
+            if secure_url:
+                logger.info(f"Successfully uploaded recording. Cloudinary URL: {secure_url}")
+                return secure_url
+            else:
+                logger.error("Cloudinary upload succeeded but no secure_url was returned.")
+                return None
+
+        except Exception as e:
+            logger.error(f"Failed to upload recording to Cloudinary: {str(e)}")
+            return None
