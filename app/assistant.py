@@ -16,6 +16,7 @@ from app.firebase_service import send_push_notification
 import asyncio
 import cloudinary
 import cloudinary.uploader
+from twilio.rest import Client
 #load_dotenv()
 
 # VOICE_ID_TO_NAME_MAP = {
@@ -82,7 +83,7 @@ class OraniAIAssistant:
         print(f"\n--- DEBUG: Configuring Vapi assistant with recording enabled: {should_record} ---\n")
         assistant_config = {
             "name": f"Orani Assistant - {business_info.get('company_info', {}).get('business_name', 'Professional')}",
-            "serverUrl": f"https://c218bed08781.ngrok-free.app/webhook/vapi",
+            "serverUrl": f"https://e1fa8237ed80.ngrok-free.app/webhook/vapi",
             "model": {
                 "provider": "openai",
                 "model": "gpt-4",
@@ -132,92 +133,101 @@ class OraniAIAssistant:
             logger.error(f"Error creating assistant: {str(e)}")
             return None
 
-    def setup_phone_number(self, user_id: str, phone_number: str = None) -> Dict:
+    # In assistant.py, replace the whole function
+
+    # In assistant.py, replace the whole function
+
+    # In assistant.py, replace the whole function
+
+    def setup_phone_number(self, user_id: str, phone_number: str) -> Optional[Dict]:
         """
-        Setup Twilio phone number and configure with Vapi.
-        This function is now more robust: it will find, create, or update as needed.
+        [FINAL, ROBUST VERSION]
+        Finds, creates, or updates a phone number config in Vapi, and then
+        programmatically configures its webhook URL in Twilio.
         """
-        print("\n" + "-"*50)
-        print(f"📞 Attempting to set up phone number: {phone_number} for user: {user_id}")
-        print("-"*50 + "\n")
-        # If no specific number requested, get an available one
-        if not phone_number:
-            available_numbers = self._get_available_numbers()
-            if available_numbers:
-                phone_number = available_numbers[0]['phoneNumber']
-            else:
-                logger.error("No available phone numbers to assign.")
-                return None
+        print(f"\n📞 Fully configuring phone number: {phone_number} for user: {user_id}")
 
         assistant_id = self._get_assistant_id(user_id)
         if not assistant_id:
             logger.error(f"Cannot setup phone: No assistant found for user '{user_id}'.")
             return None
 
-        # --- HANDLE EXISTING NUMBERS ---
-
-        # 1. Check if the phone number already exists in Vapi
+        vapi_phone_data = None
         try:
+            # --- Step 1: Find, Create, or Update the Vapi Configuration ---
+            logger.info("Checking for existing phone number in Vapi...")
             response = requests.get(f"{self.vapi_base_url}/phone-number", headers=self.vapi_headers)
+            
             if response.status_code == 200:
                 all_numbers = response.json()
                 existing_number = next((num for num in all_numbers if num.get('number') == phone_number), None)
 
                 if existing_number:
-                    # 2. If it exists, check if it's already correctly configured
-                    if existing_number.get('assistantId') == assistant_id:
-                        logger.info(f"Phone number {phone_number} already exists and is correctly configured.")
-                        self._store_phone_number(user_id, phone_number, existing_number['id'])
-                        return existing_number
-                    else:
-                        # 3. If it exists but is misconfigured (no assistant or wrong assistant), UPDATE it.
-                        logger.warning(f"Number {phone_number} exists but is misconfigured. Updating it now.")
+                    logger.info(f"Found existing Vapi config for {phone_number}. Checking if update is needed.")
+                    # If it exists, but is linked to the wrong assistant, UPDATE it.
+                    if existing_number.get('assistantId') != assistant_id:
+                        logger.warning("Assistant ID is incorrect. Updating the link...")
                         update_payload = {"assistantId": assistant_id}
                         patch_response = requests.patch(
                             f"{self.vapi_base_url}/phone-number/{existing_number['id']}",
-                            headers=self.vapi_headers,
-                            json=update_payload
+                            headers=self.vapi_headers, json=update_payload
                         )
                         if patch_response.status_code == 200:
-                            updated_data = patch_response.json()
-                            self._store_phone_number(user_id, phone_number, updated_data['id'])
-                            return updated_data
+                            vapi_phone_data = patch_response.json()
+                            logger.info("Successfully updated Vapi phone link.")
                         else:
-                            logger.error(f"Failed to update phone number: {patch_response.text}")
-                            return None
-            else:
-                logger.warning("Could not retrieve existing phone numbers. Proceeding with creation attempt.")
-        except Exception as e:
-            logger.error(f"Error checking for existing phone numbers: {str(e)}")
+                            raise Exception(f"Failed to update Vapi phone link: {patch_response.text}")
+                    else:
+                        logger.info("Vapi phone link is already correct.")
+                        vapi_phone_data = existing_number
+                else:
+                    # If it does not exist, CREATE it.
+                    logger.info(f"No Vapi config found for {phone_number}. Creating a new one.")
+                    phone_config_vapi = {
+                        "provider": "twilio", "number": phone_number,
+                        "twilioAccountSid": self.twilio_account_sid, "twilioAuthToken": self.twilio_auth_token,
+                        "assistantId": assistant_id
+                    }
+                    post_response = requests.post(
+                        f"{self.vapi_base_url}/phone-number",
+                        headers=self.vapi_headers, json=phone_config_vapi
+                    )
+                    if post_response.status_code == 201:
+                        vapi_phone_data = post_response.json()
+                        logger.info("Successfully created new Vapi phone config.")
+                    else:
+                        raise Exception(f"Failed to create Vapi phone config: {post_response.text}")
 
-        # 4. If the number does not exist at all, create it.
-        logger.info(f"Phone number {phone_number} not found. Creating a new configuration.")
-        phone_config = {
-            "provider": "twilio",
-            "number": phone_number,
-            "twilioAccountSid": self.twilio_account_sid,
-            "twilioAuthToken": self.twilio_auth_token,
-            "assistantId": assistant_id
-        }
-        
-        try:
-            response = requests.post(
-                f"{self.vapi_base_url}/phone-number",
-                headers=self.vapi_headers,
-                json=phone_config
-            )
-            
-            if response.status_code == 201:
-                phone_data = response.json()
-                self._store_phone_number(user_id, phone_number, phone_data['id'])
-                return phone_data
+                self._store_phone_number(user_id, phone_number, vapi_phone_data.get('id'))
             else:
-                logger.error(f"Failed to create new phone number configuration: {response.text}")
-                return None
+                raise Exception("Could not retrieve existing phone numbers from Vapi.")
+
         except Exception as e:
-            logger.error(f"Error creating new phone number configuration: {str(e)}")
+            logger.error(f"An error occurred during Vapi phone setup: {str(e)}")
             return None
 
+        # --- Step 2: Programmatically configure the number in Twilio (this logic is correct) ---
+        try:
+            logger.info(f"Configuring Twilio webhook for {phone_number}...")
+            twilio_client = Client(self.twilio_account_sid, self.twilio_auth_token)
+            
+            incoming_phone_numbers = twilio_client.incoming_phone_numbers.list(phone_number=phone_number)
+            if not incoming_phone_numbers:
+                logger.error(f"CRITICAL: Phone number {phone_number} not found in your Twilio account.")
+                return None
+            
+            number_to_configure = incoming_phone_numbers[0]
+            smart_router_url = "https://a6eec6336fbb.ngrok-free.app/webhook/twilio-inbound"
+            
+            number_to_configure.update(voice_url=smart_router_url, voice_method='POST')
+            
+            logger.info(f"SUCCESS: Twilio webhook for {phone_number} is now pointing to our smart router.")
+            
+        except Exception as e:
+            logger.error(f"Failed to configure number in Twilio: {str(e)}")
+            return None
+
+        return vapi_phone_data
     # In app/assistant.py, replace the whole function
 
     def handle_call_webhook(self, webhook_data: Dict) -> Dict:
@@ -257,22 +267,39 @@ class OraniAIAssistant:
                 return profile.fcm_token
             return None
 
+    # In assistant.py
     def _handle_call_start(self, webhook_data: Dict) -> Dict:
-        """Handle call start event and broadcast for IN-APP listeners (SSE)."""
+        """
+        [FINAL VERSION]
+        This ONLY runs when the AI answers a call. It sends notifications
+        to alert the user that the AI has taken over.
+        """
         call_data = webhook_data.get('message', {}).get('call', {})
         assistant_id = call_data.get('assistantId')
+        caller_number = call_data.get('customer', {}).get('number')
 
         user_id = self._get_user_id_from_assistant_id(assistant_id)
         if user_id:
-            # ONLY do the SSE broadcast here for the live, in-app pop-up.
-            notification_message = json.dumps({
-                "event": "ai_call_started", # We can make this event more specific
+            # 1. Send SSE Notification for an in-app "AI is handling this" banner
+            sse_message = json.dumps({
+                "event": "ai_took_call",
                 "userId": user_id,
-                "callId": call_data.get('id'),
-                "callerNumber": call_data.get('customer', {}).get('number')
+                "callerNumber": caller_number
             })
-            asyncio.create_task(broadcaster.broadcast(notification_message))
+            asyncio.create_task(broadcaster.broadcast(sse_message))
             print(f"\n✅ PUSHED SSE Notification: AI has taken over call for user '{user_id}'.\n")
+            
+            # 2. Send Firebase Push Notification for a background alert
+            fcm_token = self._get_fcm_token_for_user(user_id)
+            if fcm_token:
+                send_push_notification(
+                    token=fcm_token,
+                    title="AI Assistant Handling Call",
+                    body=f"Your assistant is now speaking with {caller_number}.",
+                    data={"event": "ai_took_call", "callerNumber": caller_number}
+                )
+            else:
+                logger.warning(f"No FCM token for user {user_id}. Cannot send AI takeover notification.")
             
         return {"status": "call_started"}
 
