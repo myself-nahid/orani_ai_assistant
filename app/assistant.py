@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import google.generativeai as genai
 from app.config import settings
 from app.database import engine
-from app.models import Assistant, CallSummaryDB, PhoneNumber, BusinessProfile
+from app.models import Assistant, CallSummaryDB, Message, PhoneNumber, BusinessProfile
 from sqlmodel import Session, select
 #from dotenv import load_dotenv
 from app.event_stream import broadcaster
@@ -1051,3 +1051,39 @@ class OraniAIAssistant:
         except Exception as e:
             logger.error(f"Failed to upload recording to Cloudinary: {str(e)}")
             return None
+        
+
+        # In assistant.py, add this new function
+    # Make sure you have 'from app.models import Message' at the top of the file
+
+    def get_unified_history_for_user(self, user_id: str) -> Dict:
+        """
+        Fetches all call summaries and all messages for a user, combines them,
+        and sorts them into a single chronological timeline.
+        """
+        history_items = []
+        with Session(engine) as session:
+            # 1. Fetch all call summaries for the user
+            call_statement = select(CallSummaryDB).where(CallSummaryDB.user_id == user_id)
+            call_summaries = session.exec(call_statement).all()
+            for summary in call_summaries:
+                history_items.append({
+                    "item_type": "call",
+                    "timestamp": summary.timestamp,
+                    "details": summary
+                })
+
+            # 2. Fetch all messages for the user
+            message_statement = select(Message).where(Message.user_id == user_id)
+            messages = session.exec(message_statement).all()
+            for message in messages:
+                history_items.append({
+                    "item_type": "message",
+                    "timestamp": message.timestamp,
+                    "details": message
+                })
+
+        # 3. Sort the combined list by timestamp, from newest to oldest
+        sorted_history = sorted(history_items, key=lambda item: item['timestamp'], reverse=True)
+        
+        return {"history": sorted_history}

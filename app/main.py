@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from dotenv import load_dotenv 
 load_dotenv()
-from app.api.endpoints import setup, webhooks, calls, summaries, notifications, messaging
+from app.api.endpoints import setup, webhooks, calls, summaries, notifications, messaging, history
 from app.database import create_db_and_tables 
 import json
 from starlette.requests import Request
@@ -50,6 +50,7 @@ app.include_router(calls.router, prefix="/call", tags=["Calls"])
 app.include_router(summaries.router, prefix="/summaries", tags=["Summaries"])
 app.include_router(notifications.router, prefix="/notifications", tags=["Notifications"])
 app.include_router(messaging.router, prefix="/messaging", tags=["Messaging"])
+app.include_router(history.router, prefix="/history", tags=["History"])
 
 @app.get("/", tags=["Root"])
 def read_root():

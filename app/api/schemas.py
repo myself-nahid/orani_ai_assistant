@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Dict, Any
+from typing import Dict, Any, Union, Literal
 from typing import List, Optional
 import datetime
 
@@ -97,3 +97,21 @@ class MessageResponse(BaseModel):
         "from_attributes": True,  
         "arbitrary_types_allowed": True
     }
+
+
+class HistoryItem(BaseModel):
+    item_type: str # This will be 'call' or 'message'
+    timestamp: datetime
+
+# Inherit from the base and add specific fields
+class CallHistoryItem(HistoryItem):
+    item_type: Literal['call'] = 'call'
+    details: CallSummaryResponse
+
+class MessageHistoryItem(HistoryItem):
+    item_type: Literal['message'] = 'message'
+    details: MessageResponse
+
+# This is the final response model. It can be a list of EITHER type.
+class UnifiedHistoryResponse(BaseModel):
+    history: List[Union[CallHistoryItem, MessageHistoryItem]]
