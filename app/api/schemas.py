@@ -74,3 +74,26 @@ class CallSummaryResponse(BaseModel):
         "from_attributes": True,
         "arbitrary_types_allowed": True
     }
+
+from datetime import datetime
+from pydantic import BaseModel
+
+class SendMessageRequest(BaseModel):
+    user_id: str
+    to_number: str   # Customer's number
+    from_number: str # User's Twilio number
+    body: str
+
+
+class MessageResponse(BaseModel):
+    message_sid: str
+    to_number: str
+    from_number: str
+    body: str
+    direction: str
+    timestamp: datetime 
+
+    model_config = {
+        "from_attributes": True,  
+        "arbitrary_types_allowed": True
+    }

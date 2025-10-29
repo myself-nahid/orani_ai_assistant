@@ -31,6 +31,28 @@ class CallSummaryDB(SQLModel, table=True):
     timestamp: datetime
     recording_url: Optional[str] = Field(default=None)
 
+
+
+# In app/models.py
+class Message(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: str = Field(index=True)
+    
+    # Twilio's unique ID for the message
+    message_sid: str = Field(unique=True, index=True) 
+    
+    # The 'to' and 'from' numbers
+    to_number: str
+    from_number: str
+    
+    # The content of the message
+    body: str
+    
+    # Was it an 'inbound' (customer reply) or 'outbound' (user sent) message?
+    direction: str 
+    
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+
 class PhoneNumber(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: str = Field(index=True)

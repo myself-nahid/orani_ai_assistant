@@ -133,19 +133,16 @@ class OraniAIAssistant:
             logger.error(f"Error creating assistant: {str(e)}")
             return None
 
-    # In assistant.py, replace the whole function
-
-    # In assistant.py, replace the whole function
-
-    # In assistant.py, replace the whole function
+    # In assistant.py, replace the entire function
 
     def setup_phone_number(self, user_id: str, phone_number: str) -> Optional[Dict]:
         """
-        [FINAL, ROBUST VERSION]
-        Finds, creates, or updates a phone number config in Vapi, and then
-        programmatically configures its webhook URL in Twilio.
+        [FINAL-V2]
+        1. Sets up the number in Vapi.
+        2. Programmatically configures Twilio webhooks.
+        3. Saves the final configuration to the local database.
         """
-        print(f"\n📞 Fully configuring phone number: {phone_number} for user: {user_id}")
+        print(f"\n📞 Fully configuring VOICE & MESSAGING for number: {phone_number} for user: {user_id}")
 
         assistant_id = self._get_assistant_id(user_id)
         if not assistant_id:
@@ -154,35 +151,23 @@ class OraniAIAssistant:
 
         vapi_phone_data = None
         try:
-            # --- Step 1: Find, Create, or Update the Vapi Configuration ---
-            logger.info("Checking for existing phone number in Vapi...")
+            # --- Step 1: Vapi Configuration (Find, Create, or Update) ---
             response = requests.get(f"{self.vapi_base_url}/phone-number", headers=self.vapi_headers)
-            
             if response.status_code == 200:
                 all_numbers = response.json()
                 existing_number = next((num for num in all_numbers if num.get('number') == phone_number), None)
 
                 if existing_number:
-                    logger.info(f"Found existing Vapi config for {phone_number}. Checking if update is needed.")
-                    # If it exists, but is linked to the wrong assistant, UPDATE it.
                     if existing_number.get('assistantId') != assistant_id:
-                        logger.warning("Assistant ID is incorrect. Updating the link...")
                         update_payload = {"assistantId": assistant_id}
                         patch_response = requests.patch(
                             f"{self.vapi_base_url}/phone-number/{existing_number['id']}",
                             headers=self.vapi_headers, json=update_payload
                         )
-                        if patch_response.status_code == 200:
-                            vapi_phone_data = patch_response.json()
-                            logger.info("Successfully updated Vapi phone link.")
-                        else:
-                            raise Exception(f"Failed to update Vapi phone link: {patch_response.text}")
+                        vapi_phone_data = patch_response.json()
                     else:
-                        logger.info("Vapi phone link is already correct.")
                         vapi_phone_data = existing_number
                 else:
-                    # If it does not exist, CREATE it.
-                    logger.info(f"No Vapi config found for {phone_number}. Creating a new one.")
                     phone_config_vapi = {
                         "provider": "twilio", "number": phone_number,
                         "twilioAccountSid": self.twilio_account_sid, "twilioAuthToken": self.twilio_auth_token,
@@ -192,39 +177,40 @@ class OraniAIAssistant:
                         f"{self.vapi_base_url}/phone-number",
                         headers=self.vapi_headers, json=phone_config_vapi
                     )
-                    if post_response.status_code == 201:
-                        vapi_phone_data = post_response.json()
-                        logger.info("Successfully created new Vapi phone config.")
-                    else:
-                        raise Exception(f"Failed to create Vapi phone config: {post_response.text}")
-
-                self._store_phone_number(user_id, phone_number, vapi_phone_data.get('id'))
+                    vapi_phone_data = post_response.json()
             else:
-                raise Exception("Could not retrieve existing phone numbers from Vapi.")
-
+                raise Exception("Could not retrieve phone numbers from Vapi.")
         except Exception as e:
             logger.error(f"An error occurred during Vapi phone setup: {str(e)}")
             return None
 
-        # --- Step 2: Programmatically configure the number in Twilio (this logic is correct) ---
+        # --- Step 2: Twilio Configuration (Programmatic Webhooks) ---
         try:
-            logger.info(f"Configuring Twilio webhook for {phone_number}...")
             twilio_client = Client(self.twilio_account_sid, self.twilio_auth_token)
-            
             incoming_phone_numbers = twilio_client.incoming_phone_numbers.list(phone_number=phone_number)
             if not incoming_phone_numbers:
-                logger.error(f"CRITICAL: Phone number {phone_number} not found in your Twilio account.")
-                return None
+                raise Exception(f"Phone number {phone_number} not found in Twilio account.")
             
             number_to_configure = incoming_phone_numbers[0]
-            smart_router_url = "https://a6eec6336fbb.ngrok-free.app/webhook/twilio-inbound"
-            
-            number_to_configure.update(voice_url=smart_router_url, voice_method='POST')
-            
-            logger.info(f"SUCCESS: Twilio webhook for {phone_number} is now pointing to our smart router.")
-            
+            smart_router_url = f"https://e1fa8237ed80.ngrok-free.app/webhook/twilio-inbound"
+            messaging_router_url = f"https://e1fa8237ed80.ngrok-free.app/webhook/twilio-messaging"
+
+            number_to_configure.update(
+                voice_url=smart_router_url, voice_method='POST',
+                sms_url=messaging_router_url, sms_method='POST'
+            )
+            logger.info(f"SUCCESS: Twilio webhooks for {phone_number} are configured.")
         except Exception as e:
             logger.error(f"Failed to configure number in Twilio: {str(e)}")
+            return None
+        
+        # --- Step 3: THIS IS THE FIX - Save to Local Database ---
+        vapi_phone_id = vapi_phone_data.get('id')
+        if vapi_phone_id:
+            self._store_phone_number(user_id, phone_number, vapi_phone_id)
+            logger.info(f"Successfully stored phone number {phone_number} in local DB.")
+        else:
+            logger.error("Could not store phone number locally because Vapi did not return a phone ID.")
             return None
 
         return vapi_phone_data

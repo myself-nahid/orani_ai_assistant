@@ -92,3 +92,41 @@ async def handle_dial_status(request: Request):
         return Response(content=twiml_response, media_type="application/xml")
     
     return Response("<Response><Hangup/></Response>", media_type="application/xml")
+
+from starlette.responses import Response
+from sqlmodel import Session
+from app.database import engine
+from app.models import Message
+
+
+@router.post("/twilio-messaging")
+async def handle_twilio_messaging_webhook(request: Request, orani: OraniAIAssistant = Depends(get_orani_assistant)):
+    """Receives incoming SMS replies from Twilio and saves them."""
+    form = await request.form()
+    
+    # We need to find which user this message is for. We can look up the 'To' number.
+    user_phone_number = form.get("To")
+    user_id = orani._get_user_id_from_phone_number(user_phone_number)
+    
+    if not user_id:
+        logger.error(f"Received SMS reply for unassigned number: {user_phone_number}")
+        return Response(status_code=404)
+
+    # Save the incoming message to our database
+    received_message = Message(
+        user_id=user_id,
+        message_sid=form.get("MessageSid"),
+        to_number=form.get("To"),
+        from_number=form.get("From"),
+        body=form.get("Body"),
+        direction="inbound"
+    )
+    with Session(engine) as session:
+        session.add(received_message)
+        session.commit()
+        
+    # You can now send real-time notifications (SSE/Firebase) here
+    # to alert the user of the new message.
+
+    # We must return an empty TwiML response to acknowledge receipt
+    return Response("<Response></Response>", media_type="application/xml")
