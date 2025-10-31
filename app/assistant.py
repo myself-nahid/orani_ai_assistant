@@ -17,6 +17,8 @@ import asyncio
 import cloudinary
 import cloudinary.uploader
 from twilio.rest import Client
+from sqlmodel import Session, select, and_, or_
+from sqlalchemy import func 
 #load_dotenv()
 
 # VOICE_ID_TO_NAME_MAP = {
@@ -1018,7 +1020,6 @@ class OraniAIAssistant:
                 logger.error(f"Could not find a user for phone number: {phone_number_string}")
                 return None
             
-    # In assistant.py, add this new function to the class
     def _upload_recording_to_cloudinary(self, vapi_recording_url: str, call_id: str) -> Optional[str]:
         """Downloads a recording from Vapi and uploads it to Cloudinary."""
         logger.info(f"Uploading recording for call {call_id} to Cloudinary.")
@@ -1051,39 +1052,82 @@ class OraniAIAssistant:
         except Exception as e:
             logger.error(f"Failed to upload recording to Cloudinary: {str(e)}")
             return None
-        
-
-        # In assistant.py, add this new function
-    # Make sure you have 'from app.models import Message' at the top of the file
 
     def get_unified_history_for_user(self, user_id: str) -> Dict:
         """
-        Fetches all call summaries and all messages for a user, combines them,
-        and sorts them into a single chronological timeline.
+        [DEBUGGING VERSION]
+        Fetches ALL call summaries and messages for a user.
         """
+        print(f"\n--- DEBUG: Looking for ALL history for user_id: '{user_id}' ---")
         history_items = []
         with Session(engine) as session:
-            # 1. Fetch all call summaries for the user
             call_statement = select(CallSummaryDB).where(CallSummaryDB.user_id == user_id)
             call_summaries = session.exec(call_statement).all()
-            for summary in call_summaries:
-                history_items.append({
-                    "item_type": "call",
-                    "timestamp": summary.timestamp,
-                    "details": summary
-                })
+            print(f"--- DEBUG: Found {len(call_summaries)} total call summaries for this user.")
 
-            # 2. Fetch all messages for the user
             message_statement = select(Message).where(Message.user_id == user_id)
             messages = session.exec(message_statement).all()
-            for message in messages:
-                history_items.append({
-                    "item_type": "message",
-                    "timestamp": message.timestamp,
-                    "details": message
-                })
+            print(f"--- DEBUG: Found {len(messages)} total messages for this user.")
 
-        # 3. Sort the combined list by timestamp, from newest to oldest
+            for summary in call_summaries:
+                history_items.append({"item_type": "call", "timestamp": summary.timestamp, "details": summary})
+            for message in messages:
+                history_items.append({"item_type": "message", "timestamp": message.timestamp, "details": message})
+
         sorted_history = sorted(history_items, key=lambda item: item['timestamp'], reverse=True)
-        
+        print(f"--- DEBUG: Returning a combined total of {len(sorted_history)} history items. ---\n")
+        return {"history": sorted_history}
+
+    def get_unified_history_for_customer(self, user_id: str, customer_number: str) -> Dict:
+        """
+        [ULTIMATE DEBUGGING VERSION]
+        Uses a LIKE query and prints raw data to find the mismatch.
+        """
+        print(f"\n--- DEBUG: Filtering history for user_id: '{user_id}' and customer_number: '{customer_number}' ---")
+        history_items = []
+        with Session(engine) as session:
+            raw_call_statement = select(CallSummaryDB).where(CallSummaryDB.user_id == user_id)
+            raw_call_summary = session.exec(raw_call_statement).first() # Grabs the first matching summary
+            if raw_call_summary:
+                db_phone_number = raw_call_summary.caller_phone
+                print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+                print("!!! RAW DATABASE DEBUG !!!")
+                print(f"!!! Raw 'caller_phone' from DB: '{db_phone_number}'")
+                print(f"!!! Length of DB phone number:  {len(db_phone_number)}")
+                print(f"!!! Length of requested number: {len(customer_number)}")
+                print(f"!!! Do they match exactly?      {db_phone_number == customer_number}")
+                print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+            else:
+                print("--- DEBUG: Could not find ANY call summary for this user_id to debug with.")
+
+            like_query_param = f"%{customer_number}%"
+            call_statement = select(CallSummaryDB).where(
+                and_(
+                    CallSummaryDB.user_id == user_id,
+                    CallSummaryDB.caller_phone.like(like_query_param)
+                )
+            )
+            call_summaries = session.exec(call_statement).all()
+            print(f"--- DEBUG (using LIKE Query): Found {len(call_summaries)} call summaries matching this customer.")
+
+            # The message query can stay the same as it's already working
+            message_statement = select(Message).where(
+                and_(
+                    Message.user_id == user_id,
+                    or_(
+                        Message.to_number == customer_number,
+                        Message.from_number == customer_number
+                    )
+                )
+            )
+            messages = session.exec(message_statement).all()
+            print(f"--- DEBUG: Found {len(messages)} messages matching this customer.")
+            
+            for summary in call_summaries:
+                history_items.append({"item_type": "call", "timestamp": summary.timestamp, "details": summary})
+            for message in messages:
+                history_items.append({"item_type": "message", "timestamp": message.timestamp, "details": message})
+
+        sorted_history = sorted(history_items, key=lambda item: item['timestamp'], reverse=True)
+        print(f"--- DEBUG: Returning a combined total of {len(sorted_history)} filtered history items. ---\n")
         return {"history": sorted_history}

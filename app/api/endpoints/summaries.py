@@ -1,10 +1,8 @@
-# In the new file: app/api/endpoints/summaries.py
-
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List
 from app.assistant import OraniAIAssistant
 from app.api.deps import get_orani_assistant
-from app.api.schemas import CallSummaryResponse # We will create this in the next step
+from app.api.schemas import CallSummaryResponse 
 
 router = APIRouter()
 
