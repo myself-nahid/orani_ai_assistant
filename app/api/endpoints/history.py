@@ -1,9 +1,28 @@
 from fastapi import APIRouter, Depends, HTTPException
-from typing import Optional
+from typing import List, Optional
+from app.api.schemas import ConversationPreview
 from app.assistant import OraniAIAssistant
 from app.api.deps import get_orani_assistant
 
 router = APIRouter()
+
+@router.get("/{user_id}/latest", response_model=List[ConversationPreview]) 
+def get_latest_history_previews(
+    user_id: str,
+    orani: OraniAIAssistant = Depends(get_orani_assistant)
+):
+    """
+    Retrieves a list of the most recent interactions (previews) for each
+    conversation thread. Optimized for building an inbox view.
+    """
+    preview_data = orani.get_conversation_previews(user_id)
+    
+    if preview_data and "previews" in preview_data:
+        return preview_data["previews"] 
+    else:
+        raise HTTPException(status_code=404, detail=f"No history found for user {user_id}.")
+
+
 
 @router.get("/{user_id}/{customer_number}")
 def get_unified_history(

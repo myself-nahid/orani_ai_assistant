@@ -115,3 +115,9 @@ class MessageHistoryItem(HistoryItem):
 # This is the final response model. It can be a list of EITHER type.
 class UnifiedHistoryResponse(BaseModel):
     history: List[Union[CallHistoryItem, MessageHistoryItem]]
+
+class ConversationPreview(BaseModel):
+    customer_number: str
+    item_type: str
+    preview: str
+    timestamp: datetime
