@@ -194,11 +194,11 @@ class OraniAIAssistant:
                 raise Exception(f"Phone number {phone_number} not found in Twilio account.")
             
             number_to_configure = incoming_phone_numbers[0]
-            smart_router_url = f"https://e1fa8237ed80.ngrok-free.app/webhook/twilio-inbound"
+            #smart_router_url = f"https://e1fa8237ed80.ngrok-free.app/webhook/twilio-inbound"
             messaging_router_url = f"https://e1fa8237ed80.ngrok-free.app/webhook/twilio-messaging"
 
             number_to_configure.update(
-                voice_url=smart_router_url, voice_method='POST',
+                #voice_url=smart_router_url, voice_method='POST',
                 sms_url=messaging_router_url, sms_method='POST'
             )
             logger.info(f"SUCCESS: Twilio webhooks for {phone_number} are configured.")
@@ -368,20 +368,48 @@ class OraniAIAssistant:
             print("\n" + "="*50 + "\n")
 
             assistant_id_from_call = call_details.get('assistantId')
-        print(f"\n--- DEBUG: Assistant ID from the Vapi call report is: {assistant_id_from_call} ---")
+            print(f"\n--- DEBUG: Assistant ID from the Vapi call report is: {assistant_id_from_call} ---")
 
-        if assistant_id_from_call:
-            user_id_found = self._get_user_id_from_assistant_id(assistant_id_from_call)
-            print(f"--- DEBUG: Looked up this assistant ID in the DB. User found: {user_id_found} ---")
+            if assistant_id_from_call:
+                user_id_found = self._get_user_id_from_assistant_id(assistant_id_from_call)
+                print(f"--- DEBUG: Looked up this assistant ID in the DB. User found: {user_id_found} ---")
 
-            if user_id_found:
-                print(f"--- DEBUG: User ID found! Saving summary to database... ---")
-                self._store_call_summary(user_id_found, summary, recording_url)
-                logger.info(f"Successfully stored summary for call {call_id} for user {user_id_found}.")
+                if user_id_found:
+                    print(f"--- DEBUG: User ID found! Saving summary to database... ---")
+                    
+                    # You are already saving the summary here, which is perfect.
+                    self._store_call_summary(user_id_found, summary, recording_url)
+                    logger.info(f"Successfully stored summary for call {call_id} for user {user_id_found}.")
+
+                    # --- THIS IS THE NEW PART TO ADD ---
+
+                    # 1. Send an SSE notification for a live in-app update
+                    sse_message = json.dumps({
+                        "event": "new_summary",
+                        "userId": user_id_found,
+                        "callId": call_id
+                    })
+                    asyncio.create_task(broadcaster.broadcast(sse_message))
+                    print(f"\n✅ PUSHED SSE Notification: New summary for user '{user_id_found}'.\n")
+
+                    # 2. Send a Firebase push notification for a background alert
+                    fcm_token = self._get_fcm_token_for_user(user_id_found)
+                    if fcm_token:
+                        send_push_notification(
+                            token=fcm_token,
+                            title="New Call Summary",
+                            body=f"A summary for your call with {summary.caller_phone} is ready.",
+                            data={"event": "new_summary", "callId": call_id}
+                        )
+                    else:
+                        logger.warning(f"No FCM token for user {user_id_found}. Cannot send summary push notification.")
+                    
+                    # ------------------------------------
+
+                else:
+                    logger.error(">>> FAILURE: The assistant ID from the call does not match any assistant in our database. Summary not saved.")
             else:
-                logger.error(">>> FAILURE: The assistant ID from the call does not match any assistant in our database. Summary not saved.")
-        else:
-            logger.error(">>> FAILURE: 'assistantId' was missing from the Vapi call details. Summary not saved.")
+                logger.error(">>> FAILURE: 'assistantId' was missing from the Vapi call details. Summary not saved.")
 
     def _handle_transcript_update(self, webhook_data: Dict) -> Dict:
         """Handle real-time transcript updates"""
