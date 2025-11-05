@@ -16,6 +16,7 @@ def get_latest_history_previews(
     conversation thread. Optimized for building an inbox view.
     """
     preview_data = orani.get_conversation_previews(user_id)
+    print("Retrieved conversation previews:", preview_data)
     
     if preview_data and "previews" in preview_data:
         return preview_data["previews"] 
@@ -43,6 +44,7 @@ def get_unified_history(
         history_data = orani.get_unified_history_for_user(user_id)
     
     if history_data and history_data.get("history"):
+        print("Retrieved unified history:", history_data)
         return history_data
     else:
         detail_msg = f"Could not retrieve history for user {user_id}."

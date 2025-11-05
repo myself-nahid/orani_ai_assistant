@@ -2,13 +2,14 @@ from fastapi import FastAPI
 from dotenv import load_dotenv 
 load_dotenv()
 from app.api.endpoints import setup, webhooks, calls, summaries, notifications, messaging, history
-from app.database import create_db_and_tables 
+from app.database import create_db_and_tables, manually_add_structured_summary_column
 import json
 from starlette.requests import Request
 from app.firebase_service import initialize_firebase
 
 def on_startup():
     create_db_and_tables()
+    manually_add_structured_summary_column()
     initialize_firebase()
 
 app = FastAPI(

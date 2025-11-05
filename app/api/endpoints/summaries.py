@@ -15,8 +15,11 @@ def get_user_summaries(
     Retrieves all call summaries for a given user from the local database.
     """
     summaries = orani.get_call_summaries_for_user(user_id)
-    
+    print("Retrieved summaries:", summaries) 
     if summaries is not None:
+        for summary in summaries:
+            if not hasattr(summary, 'structured_summary') or summary.structured_summary is None:
+                summary.structured_summary = {}
         return summaries
     else:
         # This will happen if the user_id is not found or an error occurs

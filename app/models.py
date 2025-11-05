@@ -26,6 +26,7 @@ class CallSummaryDB(SQLModel, table=True):
     transcript: str
     summary: str
     key_points: List[str] = Field(sa_column=Column(JSON))
+    structured_summary: Optional[Dict[str, List[str]]] = Field(default=None, sa_column=Column(JSON))
     outcome: str
     caller_intent: str
     timestamp: datetime

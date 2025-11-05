@@ -81,7 +81,7 @@ class OraniAIAssistant:
         db_profile = self._get_business_profile(user_id)
         selected_voice = db_profile.selected_voice_id if db_profile else "kylie"
         print(f"\n--- DEBUG: Configuring Vapi assistant with voice ID: {selected_voice} ---\n")
-        should_record = db_profile.recording_enabled if db_profile else False
+        should_record = True 
         print(f"\n--- DEBUG: Configuring Vapi assistant with recording enabled: {should_record} ---\n")
         assistant_config = {
             "name": f"Orani Assistant - {business_info.get('company_info', {}).get('business_name', 'Professional')}",
@@ -101,7 +101,7 @@ class OraniAIAssistant:
                 "voiceId": selected_voice
             },
             "firstMessage": business_info.get('greeting', "Hello."),
-            "recordingEnabled": should_record,
+            "recordingEnabled": True,
             "endCallMessage": "Thank you for calling. Have a great day!",
             "maxDurationSeconds": 1800,  # 30 minutes max
             "transcriber": {
@@ -292,7 +292,9 @@ class OraniAIAssistant:
         return {"status": "call_started"}
 
     def _handle_call_end(self, webhook_data: Dict) -> Dict:
-        """Handle call end event, generate summary, and SAVE it to the database."""
+        """
+        Handle call end event, generate a structured summary matching client requirements, and save it.
+        """
         call_data = webhook_data.get('message', {}).get('call', {})
         call_id = call_data.get('id')
         
@@ -308,82 +310,156 @@ class OraniAIAssistant:
                 end_time = datetime.fromisoformat(ended_at_str.replace("Z", "+00:00"))
                 start_time = datetime.fromisoformat(started_at_str.replace("Z", "+00:00"))
                 duration = int((end_time - start_time).total_seconds())
+            
             recording_url = None
             vapi_rec_url = call_details.get("recordingUrl")
             if vapi_rec_url:
-                # If a recording exists, upload it and get the permanent URL
                 recording_url = self._upload_recording_to_cloudinary(vapi_rec_url, call_id)
-                print(f"\n--- DEBUG: Uploaded recording URL: {recording_url} ---\n")
 
+            # --- CLIENT-SPECIFIED FORMAT PROMPT ---
             summary_prompt = f"""
-            Analyze the following phone call transcript. Your task is to extract all key takeaways, action items, and follow-up tasks.
+            You are a professional business assistant analyzing a phone call transcript. Your goal is to create a clear, organized summary that helps the business owner quickly understand what happened and what needs to be done.
 
-            **Transcript:**
+            **TRANSCRIPT:**
             ---
             {transcript}
             ---
 
-            **Instructions:**
-            1.  DO NOT write a paragraph-style summary.
-            2.  Present all information as a list of concise, scannable, and actionable bullet points.
-            3.  Each bullet point should be a complete, clear instruction or a key fact for the business owner. Start action items with "ACTION:".
-            4.  Format the entire output as a single JSON object with one key: `"bullet_points"`. The value of this key should be a list of strings.
+            **YOUR TASK:**
 
-            **JSON Output Example:**
+            Create a structured JSON summary with these EXACT sections:
+
+            1. **"AI Summary"** (2-3 concise bullet points)
+            - Provide a high-level overview of the call
+            - Include key business metrics (sales figures, quantities, etc.)
+            - Focus on the most important takeaways
+            - Write in past tense, stating facts clearly
+
+            2. **"Action Items"** (2-4 specific actions for the business owner)
+            - List ONLY actions the USER/BUSINESS OWNER must personally take
+            - Start with strong action verbs (Send, Order, Call, Schedule, Follow up, Review, Confirm, etc.)
+            - Include deadlines or timeframes when mentioned in the call
+            - Be specific and clear about what needs to be done
+            - Focus on next steps that require the owner's attention
+            - Example: "Send the final invoice to the client by Thursday next week"
+            - Example: "Order additional sweatpants in green and gray (sizes M-2XL)"
+            - Example: "Call the supplier to confirm delivery date for hoodies"
+
+            3. **"To-Do List"** (2-4 general tasks from the conversation)
+            - Include tasks mentioned by anyone in the conversation
+            - Can include actions by other people or general reminders
+            - Less urgent or preparatory items
+            - Items that need tracking but may not require immediate owner action
+
+            4. **Business Topic Sections** (2-4 topic categories)
+            - Identify main themes from the conversation (e.g., "Inventory and Orders", "Sales Performance", "Customer Feedback", "Future Plans", "Scheduling", "Product Issues")
+            - Each section should have 2-5 bullet points
+            - Focus on facts, details, and specifics mentioned in the call
+            - Include quantities, sizes, colors, prices, dates when discussed
+            - Avoid repeating information already in AI Summary or Action Items
+
+            **JSON FORMAT:**
             {{
-            "bullet_points": [
-                "Caller's name is Alex.",
-                "ACTION: Call Alex back at 555-123-4567 to schedule the appointment.",
-                "Requested appointment time is for this Friday afternoon.",
-                "Inquired about the 'Standard Deck Package' pricing."
+            "AI Summary": [
+                "Brief overview statement about the call purpose or outcome.",
+                "Key business metric or financial figure discussed.",
+                "Important customer or operational status update."
+            ],
+            "Action Items": [
+                "Send the invoice to the client by Thursday next week.",
+                "Order more sweatpants in various sizes, including green and gray.",
+                "Follow up with supplier about 2XL hoodie availability."
+            ],
+            "To-Do List": [
+                "The supplier will text with final order details once ready.",
+                "Client will notify when they need the next order.",
+                "Review inventory levels before the weekend rush."
+            ],
+            "Inventory and Orders": [
+                "Specific inventory details with quantities and sizes.",
+                "Items that are in high demand or short supply.",
+                "Recent orders placed with details."
+            ],
+            "Sales Performance": [
+                "Sales figures and metrics from the call.",
+                "Popular items and customer preferences.",
+                "Revenue or transaction details."
+            ],
+            "Future Plans": [
+                "Upcoming events or launches mentioned.",
+                "Strategic decisions or plans discussed.",
+                "Expected timelines or next steps."
             ]
             }}
 
-            **Provide only the raw JSON object as the output.**
+            **CRITICAL DISTINCTION:**
+            - **Action Items** = What the USER must do (user's responsibility, urgent)
+            - **To-Do List** = What others will do, general reminders, or follow-up tracking items
+
+            **IMPORTANT RULES:**
+            - Use clear, simple business language
+            - Be specific with numbers, dates, and details
+            - Each bullet point should be a complete, standalone sentence
+            - Vary the topic names based on the actual conversation content
+            - Only create sections that are relevant to this specific call
+            - Aim for 4-6 total sections (including AI Summary, Action Items, and To-Do List)
+            - Keep each bullet point concise (1-2 sentences maximum)
+
+            Return ONLY the raw JSON object with no additional text or explanation.
             """
 
-            summary_data = self._ai_summarize(summary_prompt)
-            bullet_points = summary_data.get("bullet_points", ["AI summary failed to generate."])
+            # Generate the structured summary from the AI
+            structured_summary_data = self._ai_summarize(summary_prompt)
 
-            summary = CallSummary(
-            call_id=call_id,
-            caller_phone=caller_number,
-            duration=duration,
-            transcript=transcript,
-            summary="\n".join(f"- {item}" for item in bullet_points),
-            key_points=bullet_points,
-            outcome=summary_data.get("outcome", "Outcome not determined."), 
-            caller_intent=summary_data.get("caller_intent", "Intent not determined."),
-            timestamp=datetime.now()
+            # Extract key points - prioritize Action Items, then AI Summary
+            flat_key_points = []
+            
+            # First add Action Items (these are what the user needs to do)
+            if "Action Items" in structured_summary_data:
+                flat_key_points.extend(structured_summary_data["Action Items"][:3])
+            
+            # If we need more, add from AI Summary (to reach 3-4 total)
+            if len(flat_key_points) < 3 and "AI Summary" in structured_summary_data:
+                needed = min(4 - len(flat_key_points), len(structured_summary_data["AI Summary"]))
+                flat_key_points.extend(structured_summary_data["AI Summary"][:needed])
+            
+            # Limit to maximum 4 key points
+            flat_key_points = flat_key_points[:4]
+            
+            # Create formatted string for simple summary preview
+            simple_summary_points = []
+            for topic, points in structured_summary_data.items():
+                simple_summary_points.append(f"{topic}")
+                for point in points:
+                    simple_summary_points.append(f"• {point}")
+            
+            simple_summary_str = "\n".join(simple_summary_points)
+
+            # Create the summary object for the database
+            summary_for_db = CallSummary(
+                call_id=call_id,
+                caller_phone=caller_number,
+                duration=duration,
+                transcript=transcript,
+                summary=simple_summary_str,
+                key_points=flat_key_points,
+                outcome="Completed",
+                caller_intent="Not Determined",
+                timestamp=datetime.now()
             )
-
-            print("\n" + "="*50)
-            print("🎉 COMPLETE CALL SUMMARY (BULLET-POINT FORMAT) 🎉")
-            print("="*50)
-            print(f"Call ID: {summary.call_id}")
-            print(f"Caller Phone: {summary.caller_phone}")
-            print("\n--- Action Items & Follow-up Tasks ---")
-            for item in summary.key_points:
-                print(f"- {item}")
-            print("\n" + "="*50 + "\n")
-
+            
+            print(f"\n📝 Generated structured summary for call {call_id}:\n{json.dumps(structured_summary_data, indent=2)}\n")
+            print(f"🔑 Key Points ({len(flat_key_points)}): {flat_key_points}\n")
+            
+            # Save everything to the database
             assistant_id_from_call = call_details.get('assistantId')
-            print(f"\n--- DEBUG: Assistant ID from the Vapi call report is: {assistant_id_from_call} ---")
-
             if assistant_id_from_call:
                 user_id_found = self._get_user_id_from_assistant_id(assistant_id_from_call)
-                print(f"--- DEBUG: Looked up this assistant ID in the DB. User found: {user_id_found} ---")
-
                 if user_id_found:
-                    print(f"--- DEBUG: User ID found! Saving summary to database... ---")
+                    self._store_structured_call_summary(user_id_found, summary_for_db, recording_url, structured_summary_data)
+                    logger.info(f"Successfully stored structured summary for call {call_id} for user {user_id_found}.")
                     
-                    # You are already saving the summary here, which is perfect.
-                    self._store_call_summary(user_id_found, summary, recording_url)
-                    logger.info(f"Successfully stored summary for call {call_id} for user {user_id_found}.")
-
-                    # --- THIS IS THE NEW PART TO ADD ---
-
-                    # 1. Send an SSE notification for a live in-app update
+                    # SSE notification
                     sse_message = json.dumps({
                         "event": "new_summary",
                         "userId": user_id_found,
@@ -392,24 +468,43 @@ class OraniAIAssistant:
                     asyncio.create_task(broadcaster.broadcast(sse_message))
                     print(f"\n✅ PUSHED SSE Notification: New summary for user '{user_id_found}'.\n")
 
-                    # 2. Send a Firebase push notification for a background alert
+                    # Firebase push notification
                     fcm_token = self._get_fcm_token_for_user(user_id_found)
                     if fcm_token:
                         send_push_notification(
                             token=fcm_token,
                             title="New Call Summary",
-                            body=f"A summary for your call with {summary.caller_phone} is ready.",
+                            body=f"A summary for your call with {summary_for_db.caller_phone} is ready.",
                             data={"event": "new_summary", "callId": call_id}
                         )
                     else:
                         logger.warning(f"No FCM token for user {user_id_found}. Cannot send summary push notification.")
-                    
-                    # ------------------------------------
-
                 else:
                     logger.error(">>> FAILURE: The assistant ID from the call does not match any assistant in our database. Summary not saved.")
             else:
                 logger.error(">>> FAILURE: 'assistantId' was missing from the Vapi call details. Summary not saved.")
+
+        return {"status": "call_ended"}
+    def _store_structured_call_summary(self, user_id: str, summary: CallSummary, recording_url: Optional[str], structured_summary: Dict) -> bool:
+        """Stores the complete call summary, including the structured data, into our local database."""
+        summary_to_db = CallSummaryDB(
+            user_id=user_id,
+            call_id=summary.call_id,
+            caller_phone=summary.caller_phone,
+            duration=summary.duration,
+            transcript=summary.transcript,
+            summary=summary.summary,
+            key_points=summary.key_points,
+            structured_summary=structured_summary, # Saving the new data
+            outcome=summary.outcome,
+            caller_intent=summary.caller_intent,
+            recording_url=recording_url,
+            timestamp=summary.timestamp
+        )
+        with Session(engine) as session:
+            session.add(summary_to_db)
+            session.commit()
+        return True
 
     def _handle_transcript_update(self, webhook_data: Dict) -> Dict:
         """Handle real-time transcript updates"""

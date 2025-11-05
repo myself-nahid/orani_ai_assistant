@@ -65,6 +65,7 @@ class CallSummaryResponse(BaseModel):
     transcript: str
     summary: str
     key_points: List[str]
+    structured_summary: Optional[Dict[str, List[str]]] = None
     outcome: str
     caller_intent: str
     timestamp: datetime
