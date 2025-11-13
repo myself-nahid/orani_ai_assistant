@@ -72,7 +72,7 @@ async def handle_vapi_webhook(
 #         return Response("<Response><Hangup/></Response>", media_type="application/xml")
 
 #     timeout = profile.ring_count * 5
-#     dial_status_handler_url = f"https://e1fa8237ed80.ngrok-free.app/webhook/dial-status?assistantId={assistant_id}"
+#     dial_status_handler_url = f"https://68c23a64de60.ngrok-free.app/webhook/dial-status?assistantId={assistant_id}"
 
 #     twiml_response = f"""
 #     <Response>

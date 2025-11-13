@@ -84,6 +84,7 @@ class SendMessageRequest(BaseModel):
     to_number: str   # Customer's number
     from_number: str # User's Twilio number
     body: str
+    media_urls: Optional[List[str]] = None
 
 
 class MessageResponse(BaseModel):

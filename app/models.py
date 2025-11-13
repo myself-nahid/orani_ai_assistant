@@ -48,6 +48,7 @@ class Message(SQLModel, table=True):
     
     # The content of the message
     body: str
+    media_urls: Optional[List[str]] = Field(default=None, sa_column=Column(JSON))
     
     # Was it an 'inbound' (customer reply) or 'outbound' (user sent) message?
     direction: str 

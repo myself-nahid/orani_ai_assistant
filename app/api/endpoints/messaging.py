@@ -9,6 +9,13 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 from app.database import engine
 from app.api.schemas import SendMessageRequest
+from fastapi import Form, File, UploadFile
+from typing import Optional, List
+import cloudinary
+from cloudinary.uploader import upload
+from cloudinary.utils import cloudinary_url
+from app.config import settings
+from datetime import datetime
 import logging
 logger = logging.getLogger(__name__)
 # class SendMessageRequest(BaseModel):
@@ -19,28 +26,83 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# In app/api/endpoints/messaging.py
+
 @router.post("/send")
-def send_sms_message(
-    payload: SendMessageRequest,
-    orani: OraniAIAssistant = Depends(get_orani_assistant)
+async def send_sms_message(
+    orani: OraniAIAssistant = Depends(get_orani_assistant),
+    # --- START: MODIFIED PARAMETERS ---
+    # We now receive data as form fields instead of a JSON payload
+    user_id: str = Form(...),
+    to_number: str = Form(...),
+    from_number: str = Form(...),
+    body: Optional[str] = Form(None),
+    file: Optional[UploadFile] = File(None)
+    # --- END: MODIFIED PARAMETERS ---
 ):
+    """
+    [UNIFIED VERSION]
+    Sends an SMS or MMS message in a single API call.
+    Accepts multipart/form-data with message details and an optional image file.
+    """
     try:
+        # 1. Validate that there's content to send
+        if not body and not file:
+            raise HTTPException(status_code=400, detail="Must provide a 'body' or a 'file'.")
+
+        media_url_list = []
+
+        print("Preparing to send message:", {
+            "user_id": user_id,
+            "to_number": to_number,
+            "from_number": from_number,
+            "body": body,
+            "file": file.filename if file else None
+        })
+
+        # 2. If a file is included, upload it to Cloudinary
+        if file:
+            logger.info("Image file detected. Uploading to Cloudinary...")
+            # Configure Cloudinary
+            cloudinary.config(
+                cloud_name=settings.CLOUDINARY_CLOUD_NAME,
+                api_key=settings.CLOUDINARY_API_KEY,
+                api_secret=settings.CLOUDINARY_API_SECRET,
+                secure=True
+            )
+            # Upload the file and get the URL
+            upload_result = cloudinary.uploader.upload(
+                file.file,
+                folder=f"mms_attachments/{datetime.now().strftime('%Y-%m')}"
+            )
+            secure_url = upload_result.get("secure_url")
+            if not secure_url:
+                raise HTTPException(status_code=500, detail="Cloudinary upload failed.")
+            
+            media_url_list.append(secure_url)
+            logger.info(f"Image uploaded successfully. URL: {secure_url}")
+
+        # 3. Prepare and send the message via Twilio
         client = Client(orani.twilio_account_sid, orani.twilio_auth_token)
+        twilio_params = {
+            "to": to_number,
+            "from_": from_number,
+        }
+        if body:
+            twilio_params["body"] = body
+        if media_url_list:
+            twilio_params["media_url"] = media_url_list
 
-        # Send the message via Twilio
-        twilio_message = client.messages.create(
-            to=payload.to_number,
-            from_=payload.from_number,
-            body=payload.body
-        )
+        twilio_message = client.messages.create(**twilio_params)
 
-        # Save the sent message to our database
+        # 4. Save the complete message to our database
         sent_message = Message(
-            user_id=payload.user_id,
+            user_id=user_id,
             message_sid=twilio_message.sid,
-            to_number=payload.to_number,
-            from_number=payload.from_number,
-            body=payload.body,
+            to_number=to_number,
+            from_number=from_number,
+            body=body,
+            media_urls=media_url_list if media_url_list else None,
             direction="outbound"
         )
         with Session(engine) as session:
@@ -50,9 +112,8 @@ def send_sms_message(
         return {"status": "success", "message_sid": twilio_message.sid}
 
     except Exception as e:
-        logger.error(f"Failed to send SMS: {str(e)}")
+        logger.error(f"Failed to send unified SMS/MMS: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to send message.")
-    
 
 # In messaging.py
 

@@ -30,3 +30,19 @@ def manually_add_structured_summary_column():
         # This will likely happen if the column already exists, which is fine.
         print(f"--- Info: Could not add column, it likely already exists. Error: {e} ---")
 # --- END: ADD THIS NEW FUNCTION ---
+
+def manually_add_media_urls_column():
+    """
+    A simple, one-time-use function to add the missing 'media_urls' column
+    to the 'message' table.
+    """
+    try:
+        with engine.connect() as connection:
+            # The SQL command to add the new 'media_urls' column to the 'message' table
+            command = text("ALTER TABLE message ADD COLUMN media_urls JSON")
+            connection.execute(command)
+            connection.commit()
+        print("--- Successfully added or verified 'media_urls' column in 'message' table. ---")
+    except Exception as e:
+        # This will likely happen if the column already exists, which is fine.
+        print(f"--- Info: Could not add 'media_urls' column, it likely already exists. Error: {e} ---")
