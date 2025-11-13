@@ -120,6 +120,6 @@ class UnifiedHistoryResponse(BaseModel):
 
 class ConversationPreview(BaseModel):
     customer_number: str
-    item_type: str
+    item_type: Literal['call', 'message', 'file']
     preview: str
     timestamp: datetime

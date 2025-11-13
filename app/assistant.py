@@ -1178,7 +1178,7 @@ class OraniAIAssistant:
 
     def get_unified_history_for_user(self, user_id: str) -> Dict:
         """
-        [DEBUGGING VERSION]
+        [UPDATED WITH FILE SUPPORT]
         Fetches ALL call summaries and messages for a user.
         """
         print(f"\n--- DEBUG: Looking for ALL history for user_id: '{user_id}' ---")
@@ -1194,23 +1194,28 @@ class OraniAIAssistant:
 
             for summary in call_summaries:
                 history_items.append({"item_type": "call", "timestamp": summary.timestamp, "details": summary})
+            
             for message in messages:
-                history_items.append({"item_type": "message", "timestamp": message.timestamp, "details": message})
+                # Determine item_type: "file" if media_urls present, otherwise "message"
+                has_media = hasattr(message, 'media_urls') and message.media_urls and len(message.media_urls) > 0
+                item_type = "file" if has_media else "message"
+                history_items.append({"item_type": item_type, "timestamp": message.timestamp, "details": message})
 
         sorted_history = sorted(history_items, key=lambda item: item['timestamp'], reverse=True)
         print(f"--- DEBUG: Returning a combined total of {len(sorted_history)} history items. ---\n")
         return {"history": sorted_history}
 
+
     def get_unified_history_for_customer(self, user_id: str, customer_number: str) -> Dict:
         """
-        [ULTIMATE DEBUGGING VERSION]
-        Uses a LIKE query and prints raw data to find the mismatch.
+        [UPDATED WITH FILE SUPPORT]
+        Uses a LIKE query to find customer interactions.
         """
         print(f"\n--- DEBUG: Filtering history for user_id: '{user_id}' and customer_number: '{customer_number}' ---")
         history_items = []
         with Session(engine) as session:
             raw_call_statement = select(CallSummaryDB).where(CallSummaryDB.user_id == user_id)
-            raw_call_summary = session.exec(raw_call_statement).first() # Grabs the first matching summary
+            raw_call_summary = session.exec(raw_call_statement).first()
             if raw_call_summary:
                 db_phone_number = raw_call_summary.caller_phone
                 print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
@@ -1233,7 +1238,6 @@ class OraniAIAssistant:
             call_summaries = session.exec(call_statement).all()
             print(f"--- DEBUG (using LIKE Query): Found {len(call_summaries)} call summaries matching this customer.")
 
-            # The message query can stay the same as it's already working
             message_statement = select(Message).where(
                 and_(
                     Message.user_id == user_id,
@@ -1248,8 +1252,12 @@ class OraniAIAssistant:
             
             for summary in call_summaries:
                 history_items.append({"item_type": "call", "timestamp": summary.timestamp, "details": summary})
+            
             for message in messages:
-                history_items.append({"item_type": "message", "timestamp": message.timestamp, "details": message})
+                # Determine item_type: "file" if media_urls present, otherwise "message"
+                has_media = hasattr(message, 'media_urls') and message.media_urls and len(message.media_urls) > 0
+                item_type = "file" if has_media else "message"
+                history_items.append({"item_type": item_type, "timestamp": message.timestamp, "details": message})
 
         sorted_history = sorted(history_items, key=lambda item: item['timestamp'], reverse=True)
         print(f"--- DEBUG: Returning a combined total of {len(sorted_history)} filtered history items. ---\n")
@@ -1257,61 +1265,67 @@ class OraniAIAssistant:
 
 
     def get_conversation_previews(self, user_id: str) -> Dict:
-            """
-            [NEW & EFFICIENT]
-            Finds the single most recent interaction (call or message) for each
-            customer a user has communicated with. Ideal for an "inbox" view.
-            """
-            print(f"\n--- DEBUG: Getting latest conversation previews for user_id: '{user_id}' ---")
+        """
+        [UPDATED WITH FILE SUPPORT]
+        Finds the single most recent interaction (call, message, or file) for each
+        customer a user has communicated with. Ideal for an "inbox" view.
+        """
+        print(f"\n--- DEBUG: Getting latest conversation previews for user_id: '{user_id}' ---")
+        
+        all_items = []
+        with Session(engine) as session:
+            # 1. Fetch all calls and messages for the user
+            calls = session.exec(select(CallSummaryDB).where(CallSummaryDB.user_id == user_id)).all()
+            messages = session.exec(select(Message).where(Message.user_id == user_id)).all()
             
-            all_items = []
-            with Session(engine) as session:
-                # 1. Fetch all calls and messages for the user
-                calls = session.exec(select(CallSummaryDB).where(CallSummaryDB.user_id == user_id)).all()
-                messages = session.exec(select(Message).where(Message.user_id == user_id)).all()
-                
-                # 2. Combine them into a single list with a standardized format
-                for summary in calls:
-                    all_items.append({
-                        "item_type": "call",
-                        "customer_number": summary.caller_phone,
-                        "timestamp": summary.timestamp,
-                        "preview": summary.summary,
-                        "details": summary 
-                    })
-                
-                # To determine the customer number for a message, we need to know the user's number
-                user_phone_numbers = {p.phone_number for p in session.exec(select(PhoneNumber).where(PhoneNumber.user_id == user_id)).all()}
-
-                for message in messages:
-                    customer_number = message.from_number if message.direction == "inbound" else message.to_number
-                    all_items.append({
-                        "item_type": "message",
-                        "customer_number": customer_number,
-                        "timestamp": message.timestamp,
-                        "preview": message.body,
-                        "details": message
-                    })
-
-            # 3. Process the list to find the latest item for each customer
-            latest_interactions = {}
-            for item in all_items:
-                customer = item["customer_number"]
-                # If we haven't seen this customer yet, or if the current item is newer, save it.
-                if customer not in latest_interactions or item["timestamp"] > latest_interactions[customer]["timestamp"]:
-                    latest_interactions[customer] = item
+            # 2. Combine them into a single list with a standardized format
+            for summary in calls:
+                all_items.append({
+                    "item_type": "call",
+                    "customer_number": summary.caller_phone,
+                    "timestamp": summary.timestamp,
+                    "preview": summary.summary,
+                    "details": summary 
+                })
             
-             # 4. Prepare the final list, sorted by timestamp
-            final_previews = []
-            for customer, data in latest_interactions.items():
-                final_previews.append({
-                    "customer_number": customer.strip(), # <--- THIS IS THE FIX
-                    "item_type": data["item_type"],
-                    "preview": data["preview"],
-                    "timestamp": data["timestamp"]
+            # To determine the customer number for a message, we need to know the user's number
+            user_phone_numbers = {p.phone_number for p in session.exec(select(PhoneNumber).where(PhoneNumber.user_id == user_id)).all()}
+
+            for message in messages:
+                customer_number = message.from_number if message.direction == "inbound" else message.to_number
+                
+                # Determine if this is a file message or regular message
+                # Rule: If media_urls exist (with or without body text), it's a "file"
+                # Otherwise, it's a "message"
+                has_media = hasattr(message, 'media_urls') and message.media_urls and len(message.media_urls) > 0
+                
+                all_items.append({
+                    "item_type": "file" if has_media else "message",
+                    "customer_number": customer_number,
+                    "timestamp": message.timestamp,
+                    "preview": message.body if message.body else "",  # Can be empty for file-only messages
+                    "details": message
                 })
 
-            sorted_previews = sorted(final_previews, key=lambda x: x['timestamp'], reverse=True)
-            
-            print(f"--- DEBUG: Found {len(sorted_previews)} unique conversation threads. ---")
-            return {"previews": sorted_previews}
+        # 3. Process the list to find the latest item for each customer
+        latest_interactions = {}
+        for item in all_items:
+            customer = item["customer_number"]
+            # If we haven't seen this customer yet, or if the current item is newer, save it.
+            if customer not in latest_interactions or item["timestamp"] > latest_interactions[customer]["timestamp"]:
+                latest_interactions[customer] = item
+        
+        # 4. Prepare the final list, sorted by timestamp
+        final_previews = []
+        for customer, data in latest_interactions.items():
+            final_previews.append({
+                "customer_number": customer.strip(),
+                "item_type": data["item_type"],
+                "preview": data["preview"],
+                "timestamp": data["timestamp"]
+            })
+
+        sorted_previews = sorted(final_previews, key=lambda x: x['timestamp'], reverse=True)
+        
+        print(f"--- DEBUG: Found {len(sorted_previews)} unique conversation threads. ---")
+        return {"previews": sorted_previews}
