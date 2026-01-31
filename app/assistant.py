@@ -85,7 +85,7 @@ class OraniAIAssistant:
         print(f"\n--- DEBUG: Configuring Vapi assistant with recording enabled: {should_record} ---\n")
         assistant_config = {
             "name": f"Orani Assistant - {business_info.get('company_info', {}).get('business_name', 'Professional')}",
-            "serverUrl": f"https://11d366bf6e79.ngrok-free.app/webhook/vapi",
+            "serverUrl": f"{settings.SERVER_BASE_URL}/webhook/vapi",
             "model": {
                 "provider": "openai",
                 "model": "gpt-4",
@@ -194,8 +194,8 @@ class OraniAIAssistant:
                 raise Exception(f"Phone number {phone_number} not found in Twilio account.")
             
             number_to_configure = incoming_phone_numbers[0]
-            #smart_router_url = f"https://11d366bf6e79.ngrok-free.app//webhook/twilio-inbound"
-            messaging_router_url = f"https://11d366bf6e79.ngrok-free.app/webhook/twilio-messaging"
+            #smart_router_url = f"{settings.SERVER_BASE_URL}//webhook/twilio-inbound"
+            messaging_router_url = f"{settings.SERVER_BASE_URL}/webhook/twilio-messaging"
 
             number_to_configure.update(
                 #voice_url=smart_router_url, voice_method='POST',
