@@ -268,6 +268,12 @@ class OraniAIAssistant:
 
         user_id = self._get_user_id_from_assistant_id(assistant_id)
         if user_id:
+            # subscription guard: ensure profile still active before notifying
+            profile = self._get_business_profile(user_id)
+            if not (profile and profile.is_subscribed):
+                logger.info(f"Call start ignored: user {user_id} is unsubscribed.")
+                return {"status": "call_ignored_unsubscribed"}
+
             # 1. Send SSE Notification for an in-app "AI is handling this" banner
             sse_message = json.dumps({
                 "event": "ai_took_call",
@@ -1069,6 +1075,7 @@ class OraniAIAssistant:
         voice_id_to_save = payload.get("selected_voice_id") or "ys3XeJJA4ArWMhRpcX1D"
         ring_count_to_save = payload.get("ring_count", 4)
         recording_enabled_to_save = payload.get("recording_enabled", False)
+        is_subscribed_to_save = payload.get("is_subscribed", False)
         # forwarding_number_to_save = payload.get("forwarding_number") # Keeping this for future use
 
         with Session(engine) as session:
@@ -1080,6 +1087,7 @@ class OraniAIAssistant:
                 profile.selected_voice_id = voice_id_to_save
                 profile.ring_count = ring_count_to_save
                 profile.recording_enabled = recording_enabled_to_save
+                profile.is_subscribed = is_subscribed_to_save
                 # profile.forwarding_number = forwarding_number_to_save
             else:
                 profile = BusinessProfile(
@@ -1088,6 +1096,7 @@ class OraniAIAssistant:
                     selected_voice_id=voice_id_to_save,
                     ring_count=ring_count_to_save,
                     recording_enabled=recording_enabled_to_save,
+                    is_subscribed=is_subscribed_to_save,
                     #forwarding_number=forwarding_number_to_save
                 )
             session.add(profile)

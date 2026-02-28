@@ -11,6 +11,7 @@ class BusinessProfile(SQLModel, table=True):
     profile_data: Dict = Field(sa_column=Column(JSON))
     ring_count: Optional[int] = Field(default=4)
     recording_enabled: bool = Field(default=False)
+    is_subscribed: bool = Field(default=False, index=True)
 
 class Assistant(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)

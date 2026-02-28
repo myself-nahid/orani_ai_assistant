@@ -5,6 +5,7 @@ from fastapi import APIRouter, Request, Depends, Response, HTTPException
 from app.firebase_service import send_push_notification
 from app.assistant import OraniAIAssistant
 from app.api.deps import get_orani_assistant
+from app.config import settings
 import json
 import asyncio
 from app.event_stream import broadcaster
@@ -179,3 +180,48 @@ async def handle_twilio_messaging_webhook(request: Request, orani: OraniAIAssist
 
     # We must return an empty TwiML response to acknowledge receipt
     return Response("<Response></Response>", media_type="application/xml")
+
+
+@router.post("/twilio-inbound")
+async def handle_twilio_inbound_call(
+    request: Request,
+    orani: OraniAIAssistant = Depends(get_orani_assistant)
+):
+    form = await request.form()
+    called_number = form.get("To")
+    caller_number = form.get("From")
+
+    user_id = orani._get_user_id_from_phone_number(called_number)
+    if not user_id:
+        # This number isn't assigned to anyone.
+        return Response("<Response><Say>The number you have dialed is not in service.</Say><Hangup/></Response>", media_type="application/xml")
+
+    # --- THIS IS THE NEW SUBSCRIPTION CHECK ---
+    profile = orani._get_business_profile(user_id)
+    if not (profile and profile.is_subscribed):
+        # If the user has no profile or is_subscribed is False, reject the call.
+        logger.warning(f"Rejecting call for non-subscribed user: {user_id}")
+        # You could also <Redirect> to a standard voicemail here.
+        return Response("<Response><Say>This number is not currently active.</Say><Hangup/></Response>", media_type="application/xml")
+    # ----------------------------------------
+
+    # If the check passes, the rest of the function proceeds as normal.
+    fcm_token = orani._get_fcm_token_for_user(user_id)
+    if fcm_token:
+        send_push_notification(...) # Send the notification
+
+    assistant_id = orani._get_assistant_id(user_id)
+    if not (profile and assistant_id):
+        return Response("<Response><Hangup/></Response>", media_type="application/xml")
+
+    timeout = profile.ring_count * 5
+    dial_status_handler_url = f"{settings.SERVER_BASE_URL}//webhook/dial-status?assistantId={assistant_id}"
+
+    twiml_response = f"""
+    <Response>
+        <Dial timeout="{timeout}" action="{dial_status_handler_url}" method="POST">
+            <Client>{user_id}</Client>
+        </Dial>
+    </Response>
+    """
+    return Response(content=twiml_response, media_type="application/xml")

@@ -43,6 +43,7 @@ class AssistantDataPayload(BaseModel):
     hours_of_operation: List[HoursOfOperationSchema] = []
     call_data: List[CallDataSchema] = []
     recording_enabled: bool = False
+    is_subscribed: bool = False
 
 class PhoneSetupRequest(BaseModel):
     user_id: str = Field(..., description="The unique identifier for the user.")
